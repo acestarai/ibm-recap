@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: ibm-recap
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        generateValue: true
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: WATSON_STT_API_KEY
+        sync: false
+      - key: WATSONX_API_KEY
+        sync: false
+      - key: WATSONX_PROJECT_ID
+        sync: false
+
+# Made with Bob
