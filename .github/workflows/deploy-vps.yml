@@ -1,0 +1,28 @@
+name: Deploy to Hostinger VPS
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Deploy to VPS
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USERNAME }}
+        key: ${{ secrets.VPS_SSH_KEY }}
+        port: ${{ secrets.VPS_PORT }}
+        script: |
+          cd /var/www/ibm-recap
+          git pull origin main
+          npm install
+          pm2 restart ibm-recap
+          pm2 save
+          echo "Deployment completed successfully!"
+
+# Made with Bob

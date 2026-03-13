@@ -1,0 +1,20 @@
+# Docker ignore file
+node_modules
+npm-debug.log
+.env
+.DS_Store
+.git
+.gitignore
+.github
+output
+*.md
+!README.md
+.vscode
+*.log
+.cfignore
+manifest.yml
+GITHUB_SETUP.md
+QUICK_START.md
+FIX_PUSH_ISSUE.md
+TOKEN_FIX.md
+IBM_CLOUD_DEPLOYMENT.md

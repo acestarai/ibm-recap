@@ -1,13 +1,265 @@
 /* IBM Dark Mode Color Palette & Modern Design */
-* { 
-  box-sizing: border-box; 
-  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
+* {
+  box-sizing: border-box;
+  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-body { 
-  margin: 0; 
+body {
+  margin: 0;
   background: #161616; /* IBM Gray 100 - Dark background */
   color: #f4f4f4; /* IBM Gray 10 - Light text */
+}
+
+/* Modal Overlay */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+/* Modal Content */
+.modal-content {
+  background: #262626;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  max-width: 600px;
+  width: 90%;
+  max-height: 85vh;
+  overflow-y: auto;
+  animation: modalSlideIn 0.3s ease-out;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Modal Header */
+.modal-header {
+  padding: 24px 24px 16px;
+  border-bottom: 1px solid #393939;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: #f4f4f4;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: #c6c6c6;
+  font-size: 32px;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.modal-close:hover {
+  background: #393939;
+  color: #f4f4f4;
+}
+
+/* Modal Body */
+.modal-body {
+  padding: 24px;
+}
+
+.modal-description {
+  margin: 0 0 20px;
+  color: #c6c6c6;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Summary Type Options */
+.summary-type-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.summary-type-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  background: #161616;
+  border: 2px solid #393939;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.summary-type-option:hover {
+  border-color: #0f62fe;
+  background: #1e1e1e;
+}
+
+.summary-type-option input[type="radio"] {
+  margin-top: 2px;
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+  accent-color: #0f62fe;
+}
+
+.summary-type-option input[type="radio"]:checked + .option-content {
+  color: #f4f4f4;
+}
+
+.summary-type-option input[type="radio"]:checked ~ .option-content .option-title {
+  color: #78a9ff;
+}
+
+.option-content {
+  flex: 1;
+}
+
+.option-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #f4f4f4;
+}
+
+.option-description {
+  font-size: 13px;
+  color: #a8a8a8;
+  line-height: 1.5;
+}
+
+/* Structured Sections */
+.structured-sections {
+  background: #161616;
+  border: 1px solid #393939;
+  border-radius: 8px;
+  padding: 20px;
+  margin-top: 16px;
+}
+
+.structured-sections h3 {
+  margin: 0 0 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #f4f4f4;
+}
+
+.section-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.section-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  background: #262626;
+  border: 1px solid #393939;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.section-checkbox:hover {
+  background: #2d2d2d;
+  border-color: #525252;
+}
+
+.section-checkbox input[type="checkbox"] {
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+  accent-color: #0f62fe;
+}
+
+.section-checkbox span {
+  font-size: 14px;
+  color: #f4f4f4;
+  user-select: none;
+}
+
+.section-checkbox input[type="checkbox"]:checked + span {
+  color: #78a9ff;
+  font-weight: 500;
+}
+
+/* Redact Words Section */
+.redact-words-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #393939;
+}
+
+.redact-words-section label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #f4f4f4;
+}
+
+.redact-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: #161616;
+  border: 1px solid #525252;
+  border-radius: 4px;
+  color: #f4f4f4;
+  font-size: 14px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  transition: border-color 0.2s;
+}
+
+.redact-input:focus {
+  outline: none;
+  border-color: #0f62fe;
+  box-shadow: 0 0 0 2px rgba(15, 98, 254, 0.2);
+}
+
+.redact-input::placeholder {
+  color: #8d8d8d;
+}
+
+/* Modal Footer */
+.modal-footer {
+  padding: 16px 24px 24px;
+  border-top: 1px solid #393939;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.modal-footer button {
+  min-width: 120px;
 }
 
 .container { 
@@ -89,30 +341,91 @@ body {
 /* Main Content Area */
 .main-content {
   display: flex;
+  flex-direction: column;
   flex: 1;
   overflow: hidden;
 }
 
-/* Left Sidebar - Dark Mode */
-.sidebar {
-  width: 280px;
-  background: #262626; /* IBM Gray 90 */
-  border-right: 1px solid #393939; /* IBM Gray 80 */
-  padding: 20px;
-  overflow-y: auto;
+/* Model Status Bar */
+.model-status-bar {
+  background: #262626;
+  border-bottom: 1px solid #393939;
+  padding: 16px 32px;
+  display: flex;
+  gap: 32px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
-.sidebar-section {
-  margin-bottom: 24px;
+.status-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.sidebar-section h3 {
-  font-size: 11px;
+.status-section:last-child {
+  margin-left: auto;
+}
+
+.refresh-button {
+  background: #393939;
+  border: 1px solid #525252;
+  color: #f4f4f4;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+}
+
+.refresh-button:hover:not(:disabled) {
+  background: #4c4c4c;
+  border-color: #6f6f6f;
+}
+
+.refresh-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.status-label {
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
-  color: #a8a8a8; /* IBM Gray 50 */
-  margin: 0 0 12px 0;
-  letter-spacing: 1px;
+  color: #a8a8a8;
+  letter-spacing: 0.5px;
+}
+
+.status-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: #f4f4f4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fallback-indicator {
+  color: #ffb000;
+  font-size: 16px;
+  cursor: help;
+}
+
+.file-ready {
+  color: #24a148;
+  font-size: 13px;
+  margin-right: 12px;
+}
+
+.file-missing {
+  color: #6f6f6f;
+  font-size: 13px;
+  margin-right: 12px;
 }
 
 /* Main Panel - Dark Mode */

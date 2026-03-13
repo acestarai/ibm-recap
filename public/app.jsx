@@ -12,32 +12,41 @@ function App() {
   const [stopping, setStopping] = useState(false);
   const [files, setFiles] = useState({ audio: null, transcript: null, summary: null });
   const [log, setLog] = useState('Ready.');
-  const [config, setConfig] = useState({});
+  const [models, setModels] = useState({ transcription: {}, summarization: {} });
   const [transcribeJob, setTranscribeJob] = useState(null);
   const [summarizeJob, setSummarizeJob] = useState(null);
   
-  // Model selection state
-  const [transcriptionModel, setTranscriptionModel] = useState('watson-stt'); // watson-stt, openai-whisper
-  const [summarizationModel, setSummarizationModel] = useState('free'); // free, watsonx, openai
-  const [openaiKey, setOpenaiKey] = useState('');
-  const [watsonxApiKey, setWatsonxApiKey] = useState('');
-  const [watsonxProjectId, setWatsonxProjectId] = useState('');
-  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
-  const [apiKeyType, setApiKeyType] = useState(''); // 'openai' or 'watsonx'
+  // Transcription options dialog state
+  const [showTranscriptOptionsDialog, setShowTranscriptOptionsDialog] = useState(false);
+  const [transcriptType, setTranscriptType] = useState('standard'); // 'standard' or 'custom'
+  const [transcriptOptions, setTranscriptOptions] = useState({
+    timestamps: true,
+    speakerDiarization: false,
+    pauses: false,
+    redactWords: ''
+  });
   
-  // API key saved state
-  const [openaiKeySaved, setOpenaiKeySaved] = useState(false);
-  const [watsonxKeySaved, setWatsonxKeySaved] = useState(false);
+  // Summarization options dialog state
+  const [showSummaryOptionsDialog, setShowSummaryOptionsDialog] = useState(false);
+  const [summaryType, setSummaryType] = useState('standard'); // 'standard' or 'structured'
+  const [structuredSections, setStructuredSections] = useState({
+    attendees: true,
+    purpose: true,
+    actionItems: true,
+    risks: true,
+    questions: true
+  });
 
   const refresh = async () => {
-    const r = await fetch('/api/status');
+    // Add cache-busting parameter to prevent browser caching
+    const r = await fetch(`/api/status?t=${Date.now()}`);
     const j = await r.json();
     const isRec = !!j.recording?.isRecording;
     const isStopping = !!j.recording?.isStopping;
     setRecording(isRec);
     setStopping(isStopping);
     setFiles(j.files || {});
-    setConfig(j.config || {});
+    setModels(j.models || { transcription: {}, summarization: {} });
     setStatus(isStopping ? 'Stopping recording...' : isRec ? 'Recording in progress' : 'Idle');
   };
 
@@ -97,7 +106,13 @@ function App() {
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j.error || 'Upload failed');
       setLog(`File uploaded: ${file.name}`);
+      
+      // Small delay to ensure metadata is written
+      await new Promise(resolve => setTimeout(resolve, 100));
       await refresh();
+      
+      // Clear the file input so the same file can be uploaded again
+      event.target.value = '';
     } catch (e) {
       setLog(`Upload error: ${e.message}`);
     } finally {
@@ -106,36 +121,82 @@ function App() {
   };
 
   const handleTranscribe = async () => {
-    if (transcriptionModel === 'openai-whisper' && !openaiKey) {
-      setApiKeyType('openai');
-      setShowApiKeyModal(true);
-      return;
+    // Show transcription options dialog
+    setShowTranscriptOptionsDialog(true);
+  };
+
+  const executeTranscription = async () => {
+    // Close dialog immediately
+    setShowTranscriptOptionsDialog(false);
+    
+    // Build transcript options based on user selection
+    const options = {};
+    if (transcriptType === 'custom') {
+      options.timestamps = transcriptOptions.timestamps;
+      options.speakerDiarization = transcriptOptions.speakerDiarization;
+      options.pauses = transcriptOptions.pauses;
+      if (transcriptOptions.redactWords.trim()) {
+        options.redactWords = transcriptOptions.redactWords.split(',').map(w => w.trim()).filter(w => w);
+      }
+    } else {
+      // Standard transcript always includes timestamps
+      options.timestamps = true;
     }
     
-    const j = await call('/api/transcribe', 'POST', { 
-      model: transcriptionModel,
-      apiKey: transcriptionModel === 'openai-whisper' ? openaiKey : undefined
-    });
+    const j = await call('/api/transcribe', 'POST', { transcriptOptions: options });
     setTranscribeJob({ status: 'running', percent: 1, message: 'Starting...' });
     await pollJob(j.jobId, setTranscribeJob);
   };
 
   const handleSummarize = async () => {
-    if (summarizationModel === 'openai' && !openaiKey) {
-      setApiKeyType('openai');
-      setShowApiKeyModal(true);
-      return;
+    // Show summarization options dialog
+    setShowSummaryOptionsDialog(true);
+  };
+
+  const handleClearSession = async () => {
+    try {
+      setBusy(true);
+      const r = await fetch('/api/clear-session', { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Failed to clear session');
+      
+      // Reset all UI state
+      setFiles({ audio: null, transcript: null, summary: null });
+      setTranscribeJob(null);
+      setSummarizeJob(null);
+      setLog('Session cleared. Ready for new meeting.');
+      
+      // Refresh to get updated status from server
+      await refresh();
+    } catch (e) {
+      setLog(`Clear session error: ${e.message}`);
+    } finally {
+      setBusy(false);
     }
-    if (summarizationModel === 'watsonx' && (!watsonxApiKey || !watsonxProjectId)) {
-      setApiKeyType('watsonx');
-      setShowApiKeyModal(true);
-      return;
+  };
+
+  const executeSummarization = async () => {
+    // Close dialog immediately
+    setShowSummaryOptionsDialog(false);
+    
+    // Build custom prompt based on user selection
+    let customPrompt = '';
+    if (summaryType === 'standard') {
+      // Standard: brief bulleted list only, no sections
+      customPrompt = `Please provide a brief, concise bulleted list of all key points and actions discussed in the meeting. Do not include any section headers or categories. Just provide a simple bulleted list.`;
+    } else if (summaryType === 'structured') {
+      const sections = [];
+      if (structuredSections.attendees) sections.push('- **List of attendees** (extract all person names mentioned anywhere in the transcript)');
+      if (structuredSections.purpose) sections.push('- **Main purpose of the meeting**');
+      if (structuredSections.actionItems) sections.push('- **Action items** with owners and deadlines');
+      if (structuredSections.risks) sections.push('- **Risks and blockers** identified');
+      if (structuredSections.questions) sections.push('- **Open questions** that need resolution');
+      
+      customPrompt = `Please provide a structured summary with the following sections. Use **bold** formatting for section titles:\n${sections.join('\n')}\n\nIMPORTANT INSTRUCTIONS FOR ATTENDEES SECTION:\n- Carefully read through the entire transcript and extract ALL person names mentioned\n- Include first names, last names, or full names (e.g., "John", "Sarah", "Dr. Smith", "Michael Chen")\n- Do NOT include generic speaker labels like "Speaker A", "Speaker B", "Speaker C"\n- List each unique person name as a bullet point\n- If truly no person names are found anywhere in the transcript, only then write "No names mentioned"`;
     }
     
-    const j = await call('/api/summarize', 'POST', { 
-      model: summarizationModel,
-      apiKey: summarizationModel === 'openai' ? openaiKey : watsonxApiKey,
-      projectId: summarizationModel === 'watsonx' ? watsonxProjectId : undefined
+    const j = await call('/api/summarize', 'POST', {
+      customPrompt: customPrompt || undefined
     });
     setSummarizeJob({ status: 'running', percent: 1, message: 'Starting...' });
     await pollJob(j.jobId, setSummarizeJob);
@@ -193,8 +254,8 @@ function App() {
 
               <div className="consent-checkbox">
                 <label>
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     checked={consentGiven}
                     onChange={(e) => setConsentGiven(e.target.checked)}
                   />
@@ -202,13 +263,15 @@ function App() {
                 </label>
               </div>
 
-              <button 
-                className="primary"
-                disabled={!consentGiven}
-                onClick={() => setCurrentPage('onboarding')}
-              >
-                Continue to Setup
-              </button>
+              <div style={{ marginTop: '24px' }}>
+                <button
+                  className="primary"
+                  disabled={!consentGiven}
+                  onClick={() => setCurrentPage('onboarding')}
+                >
+                  Continue to Setup
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -260,31 +323,10 @@ function App() {
                 </div>
               </div>
 
-              <div className="setup-step">
-                <div className="step-content">
-                  <h3>3) Verify Device Names</h3>
-                  <p>If recording fails, check your exact device names:</p>
-                  <code>ffmpeg -f avfoundation -list_devices true -i ""</code>
-                  <p>Update device names in your <code>.env</code> file if needed.</p>
-                </div>
-              </div>
-
-              <div className="setup-step">
-                <div className="step-content">
-                  <h3>4) API Keys (Optional)</h3>
-                  <p>For paid AI models, you'll need:</p>
-                  <ul>
-                    <li><strong>OpenAI API Key:</strong> For Whisper transcription and GPT summarization</li>
-                    <li><strong>IBM watsonx.ai:</strong> API key and Project ID for watsonx models</li>
-                  </ul>
-                  <p>Free options are available and don't require API keys.</p>
-                </div>
-              </div>
-
               <div className="completion-checkbox">
                 <label>
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     checked={onboardingComplete}
                     onChange={(e) => setOnboardingComplete(e.target.checked)}
                   />
@@ -292,7 +334,7 @@ function App() {
                 </label>
               </div>
 
-              <div className="button-group">
+              <div className="button-group" style={{ marginTop: '24px' }}>
                 <button 
                   className="secondary"
                   onClick={() => setCurrentPage('consent')}
@@ -317,51 +359,6 @@ function App() {
   // Main App Page
   return (
     <div className="container">
-      {/* API Key Modal */}
-      {showApiKeyModal && (
-        <div className="modal-overlay" onClick={() => setShowApiKeyModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <h3>{apiKeyType === 'openai' ? 'OpenAI API Key Required' : 'IBM watsonx.ai Credentials Required'}</h3>
-            {apiKeyType === 'openai' ? (
-              <div className="modal-body">
-                <p>Enter your OpenAI API key to use this model:</p>
-                <input
-                  type="password"
-                  placeholder="sk-..."
-                  value={openaiKey}
-                  onChange={(e) => setOpenaiKey(e.target.value)}
-                  className="api-key-input"
-                />
-                <p className="help-text">Get your API key from <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI Platform</a></p>
-              </div>
-            ) : (
-              <div className="modal-body">
-                <p>Enter your IBM watsonx.ai credentials:</p>
-                <input
-                  type="password"
-                  placeholder="API Key"
-                  value={watsonxApiKey}
-                  onChange={(e) => setWatsonxApiKey(e.target.value)}
-                  className="api-key-input"
-                />
-                <input
-                  type="text"
-                  placeholder="Project ID"
-                  value={watsonxProjectId}
-                  onChange={(e) => setWatsonxProjectId(e.target.value)}
-                  className="api-key-input"
-                />
-                <p className="help-text">Get credentials from <a href="https://cloud.ibm.com/watsonx" target="_blank">IBM watsonx.ai</a></p>
-              </div>
-            )}
-            <div className="modal-actions">
-              <button className="secondary" onClick={() => setShowApiKeyModal(false)}>Cancel</button>
-              <button className="primary" onClick={() => setShowApiKeyModal(false)}>Save</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="header">
         <h1>
           <span className="ibm-logo">IBM</span>
@@ -370,160 +367,54 @@ function App() {
       </div>
 
       <div className="main-content">
-        {/* Left Sidebar */}
-        <div className="sidebar">
-          <div className="sidebar-section">
-            <h3>Status</h3>
+        {/* Model Status Bar */}
+        <div className="model-status-bar">
+          <div className="status-section">
+            <div className="status-label">Status:</div>
             <div className={getStatusClass()}>
               {status}
             </div>
           </div>
-
-          <div className="sidebar-section">
-            <h3>Transcription Model</h3>
-            <select
-              value={transcriptionModel}
-              onChange={(e) => setTranscriptionModel(e.target.value)}
-              className="model-select"
-            >
-              <option value="watson-stt">Watson STT (Free)</option>
-              <option value="openai-whisper">OpenAI Whisper (Paid)</option>
-            </select>
-            {transcriptionModel === 'openai-whisper' && !openaiKeySaved && (
-              <div className="api-key-inline">
-                <label className="api-label">OpenAI API Key</label>
-                <div className="api-key-input-group">
-                  <input
-                    type="password"
-                    placeholder="sk-..."
-                    value={openaiKey}
-                    onChange={(e) => setOpenaiKey(e.target.value)}
-                    className="api-key-input-inline"
-                  />
-                  <button
-                    className="save-key-btn"
-                    onClick={() => setOpenaiKeySaved(true)}
-                    disabled={!openaiKey}
-                  >
-                    Save
-                  </button>
-                </div>
-                <a href="https://platform.openai.com/api-keys" target="_blank" className="api-link-help">
-                  Don't have a key? Get one here
-                </a>
-              </div>
-            )}
-            {transcriptionModel === 'openai-whisper' && openaiKeySaved && (
-              <div className="api-key-saved">
-                <span className="saved-indicator">✓ API Key Saved</span>
-                <button className="edit-key-btn" onClick={() => setOpenaiKeySaved(false)}>
-                  Edit
-                </button>
-              </div>
-            )}
+          
+          <div className="status-section">
+            <div className="status-label">Transcription:</div>
+            <div className="status-value">
+              {models.transcription?.active || 'Loading...'}
+              {models.transcription?.fallback && (
+                <span className="fallback-indicator" title={`Fallback: ${models.transcription.fallback}`}>
+                  ⚡
+                </span>
+              )}
+            </div>
           </div>
-
-          <div className="sidebar-section">
-            <h3>Summarization Model</h3>
-            <select
-              value={summarizationModel}
-              onChange={(e) => setSummarizationModel(e.target.value)}
-              className="model-select"
-            >
-              <option value="free">Basic Summary (Free)</option>
-              <option value="watsonx">IBM watsonx.ai (Paid)</option>
-              <option value="openai">OpenAI GPT (Paid)</option>
-            </select>
-            {summarizationModel === 'openai' && !openaiKeySaved && (
-              <div className="api-key-inline">
-                <label className="api-label">OpenAI API Key</label>
-                <div className="api-key-input-group">
-                  <input
-                    type="password"
-                    placeholder="sk-..."
-                    value={openaiKey}
-                    onChange={(e) => setOpenaiKey(e.target.value)}
-                    className="api-key-input-inline"
-                  />
-                  <button
-                    className="save-key-btn"
-                    onClick={() => setOpenaiKeySaved(true)}
-                    disabled={!openaiKey}
-                  >
-                    Save
-                  </button>
-                </div>
-                <a href="https://platform.openai.com/api-keys" target="_blank" className="api-link-help">
-                  Don't have a key? Get one here
-                </a>
-              </div>
-            )}
-            {summarizationModel === 'openai' && openaiKeySaved && (
-              <div className="api-key-saved">
-                <span className="saved-indicator">✓ API Key Saved</span>
-                <button className="edit-key-btn" onClick={() => setOpenaiKeySaved(false)}>
-                  Edit
-                </button>
-              </div>
-            )}
-            {summarizationModel === 'watsonx' && !watsonxKeySaved && (
-              <div className="api-key-inline">
-                <label className="api-label">WatsonX API Key</label>
-                <div className="api-key-input-group">
-                  <input
-                    type="password"
-                    placeholder="API Key"
-                    value={watsonxApiKey}
-                    onChange={(e) => setWatsonxApiKey(e.target.value)}
-                    className="api-key-input-inline"
-                  />
-                </div>
-                <label className="api-label">Project ID</label>
-                <div className="api-key-input-group">
-                  <input
-                    type="text"
-                    placeholder="Project ID"
-                    value={watsonxProjectId}
-                    onChange={(e) => setWatsonxProjectId(e.target.value)}
-                    className="api-key-input-inline"
-                  />
-                  <button
-                    className="save-key-btn"
-                    onClick={() => setWatsonxKeySaved(true)}
-                    disabled={!watsonxApiKey || !watsonxProjectId}
-                  >
-                    Save
-                  </button>
-                </div>
-                <a href="https://cloud.ibm.com/watsonx" target="_blank" className="api-link-help">
-                  Need credentials? Get them here
-                </a>
-              </div>
-            )}
-            {summarizationModel === 'watsonx' && watsonxKeySaved && (
-              <div className="api-key-saved">
-                <span className="saved-indicator">✓ Credentials Saved</span>
-                <button className="edit-key-btn" onClick={() => setWatsonxKeySaved(false)}>
-                  Edit
-                </button>
-              </div>
-            )}
+          
+          <div className="status-section">
+            <div className="status-label">Summarization:</div>
+            <div className="status-value">
+              {models.summarization?.active || 'Loading...'}
+              {models.summarization?.fallback && (
+                <span className="fallback-indicator" title={`Fallback: ${models.summarization.fallback}`}>
+                  ⚡
+                </span>
+              )}
+            </div>
           </div>
-
-          <div className="sidebar-section">
-            <h3>Available Files</h3>
-            <div className="info-row">
-              <span className="info-label">Audio</span>
-              <span className="info-value">{files.audio ? '✓' : '—'}</span>
+          
+          <div className="status-section">
+            <div className="status-label">Files:</div>
+            <div className="status-value">
+              <span className={files.audio ? 'file-ready' : 'file-missing'}>Audio {files.audio ? '✓' : '✗'}</span>
+              <span className={files.transcript ? 'file-ready' : 'file-missing'}>Transcript {files.transcript ? '✓' : '✗'}</span>
+              <span className={files.summary ? 'file-ready' : 'file-missing'}>Summary {files.summary ? '✓' : '✗'}</span>
             </div>
-            <div className="info-row">
-              <span className="info-label">Transcript</span>
-              <span className="info-value">{files.transcript ? '✓' : '—'}</span>
-            </div>
-            <div className="info-row">
-              <span className="info-label">Summary</span>
-              <span className="info-value">{files.summary ? '✓' : '—'}</span>
-            </div>
+            <button
+              className="refresh-button"
+              onClick={handleClearSession}
+              disabled={busy}
+              title="Refresh file status"
+            >
+              🔄 Refresh
+            </button>
           </div>
         </div>
 
@@ -531,7 +422,7 @@ function App() {
         <div className="main-panel">
           <div className="panel-header">
             <h2>Meeting Recording & Analysis</h2>
-            <p className="panel-subtitle">Record, upload, transcribe, and summarize your meetings</p>
+            <p className="panel-subtitle">Record/Upload, Transcribe and Summarize your meetings</p>
           </div>
 
           <div className="panel-content">
@@ -541,15 +432,15 @@ function App() {
               <div className="button-group">
                 <button
                   className="secondary"
-                  onClick={() => document.getElementById('mp3-upload').click()}
+                  onClick={() => document.getElementById('audio-upload').click()}
                   disabled={busy || recording}
                 >
-                  📁 Upload MP3
+                  📁 Upload Audio
                 </button>
                 <input
-                  id="mp3-upload"
+                  id="audio-upload"
                   type="file"
-                  accept=".mp3,audio/mpeg"
+                  accept=".mp3,.m4a,.wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/wave"
                   onChange={handleFileUpload}
                   style={{ display: 'none' }}
                 />
@@ -599,7 +490,11 @@ function App() {
                         <span className="progress-label">Transcription</span>
                         <span className="progress-percent">{transcribeJob.percent || 0}%</span>
                       </div>
-                      <div className="progress-message">{transcribeJob.message}</div>
+                      <div className="progress-message">
+                        {transcribeJob.status === 'done' && transcribeJob.percent === 100
+                          ? "Transcription complete. Please click 'Transcript PDF' to download and view the meeting transcript."
+                          : transcribeJob.message}
+                      </div>
                       <div className="progress-bar">
                         <div className="progress-fill" style={{ width: `${transcribeJob.percent || 0}%` }} />
                       </div>
@@ -611,7 +506,11 @@ function App() {
                         <span className="progress-label">Summarization</span>
                         <span className="progress-percent">{summarizeJob.percent || 0}%</span>
                       </div>
-                      <div className="progress-message">{summarizeJob.message}</div>
+                      <div className="progress-message">
+                        {summarizeJob.status === 'done' && summarizeJob.percent === 100
+                          ? "Summarization complete. Please click 'Summary PDF' to download and view the meeting summary."
+                          : summarizeJob.message}
+                      </div>
                       <div className="progress-bar">
                         <div className="progress-fill" style={{ width: `${summarizeJob.percent || 0}%` }} />
                       </div>
@@ -625,12 +524,12 @@ function App() {
             <div className="card">
               <h3>Download Files</h3>
               <div className="download-grid">
-                <button 
-                  className="secondary" 
-                  disabled={!files.audio} 
+                <button
+                  className="secondary"
+                  disabled={!files.audio}
                   onClick={() => window.open('/api/download/audio', '_blank')}
                 >
-                  🎵 Audio (MP3)
+                  🎵 Audio File
                 </button>
                 <button 
                   className="secondary" 
@@ -645,12 +544,6 @@ function App() {
                   onClick={() => window.open('/api/download/summary', '_blank')}
                 >
                   📋 Summary PDF
-                </button>
-                <button 
-                  className="secondary" 
-                  onClick={refresh}
-                >
-                  🔄 Refresh
                 </button>
               </div>
             </div>
@@ -667,6 +560,224 @@ function App() {
             </div>
           </div>
         </div>
+
+        {/* Transcription Options Dialog */}
+        {showTranscriptOptionsDialog && (
+          <div className="modal-overlay" onClick={() => setShowTranscriptOptionsDialog(false)}>
+            <div className="modal-content summary-options-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2>Transcription Options</h2>
+                <button className="modal-close" onClick={() => setShowTranscriptOptionsDialog(false)}>×</button>
+              </div>
+              
+              <div className="modal-body">
+                <p className="modal-description">Choose how you want your meeting to be transcribed:</p>
+                
+                <div className="summary-type-options">
+                  <label className="summary-type-option">
+                    <input
+                      type="radio"
+                      name="transcriptType"
+                      value="standard"
+                      checked={transcriptType === 'standard'}
+                      onChange={(e) => setTranscriptType(e.target.value)}
+                    />
+                    <div className="option-content">
+                      <div className="option-title">📝 Standard Transcript</div>
+                      <div className="option-description">
+                        A standard out-of-the-box text transcript of the meeting, line by line, with timestamps.
+                      </div>
+                    </div>
+                  </label>
+
+                  <label className="summary-type-option">
+                    <input
+                      type="radio"
+                      name="transcriptType"
+                      value="custom"
+                      checked={transcriptType === 'custom'}
+                      onChange={(e) => setTranscriptType(e.target.value)}
+                    />
+                    <div className="option-content">
+                      <div className="option-title">⚙️ Custom Transcript</div>
+                      <div className="option-description">
+                        Customize your transcript with specific options you select below.
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
+                {transcriptType === 'custom' && (
+                  <div className="structured-sections">
+                    <h3>Select Options to Include:</h3>
+                    <div className="section-checkboxes">
+                      <label className="section-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={transcriptOptions.timestamps}
+                          onChange={(e) => setTranscriptOptions({...transcriptOptions, timestamps: e.target.checked})}
+                        />
+                        <span>⏱️ Timestamps</span>
+                      </label>
+                      
+                      <label className="section-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={transcriptOptions.speakerDiarization}
+                          onChange={(e) => setTranscriptOptions({...transcriptOptions, speakerDiarization: e.target.checked})}
+                        />
+                        <span>👥 Speaker Diarization</span>
+                      </label>
+                      
+                      <label className="section-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={transcriptOptions.pauses}
+                          onChange={(e) => setTranscriptOptions({...transcriptOptions, pauses: e.target.checked})}
+                        />
+                        <span>⏸️ Pauses</span>
+                      </label>
+                    </div>
+                    
+                    <div className="redact-words-section">
+                      <label htmlFor="redactWords">
+                        <span>🔒 Redact Words/Phrases (comma-separated):</span>
+                      </label>
+                      <input
+                        id="redactWords"
+                        type="text"
+                        className="redact-input"
+                        placeholder="e.g., confidential, password, secret"
+                        value={transcriptOptions.redactWords}
+                        onChange={(e) => setTranscriptOptions({...transcriptOptions, redactWords: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="modal-footer">
+                <button className="secondary" onClick={() => setShowTranscriptOptionsDialog(false)}>
+                  Cancel
+                </button>
+                <button className="primary" onClick={executeTranscription}>
+                  Generate Transcript
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Summarization Options Dialog */}
+        {showSummaryOptionsDialog && (
+          <div className="modal-overlay" onClick={() => setShowSummaryOptionsDialog(false)}>
+            <div className="modal-content summary-options-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2>Summarization Options</h2>
+                <button className="modal-close" onClick={() => setShowSummaryOptionsDialog(false)}>×</button>
+              </div>
+              
+              <div className="modal-body">
+                <p className="modal-description">Choose how you want your meeting to be summarized:</p>
+                
+                <div className="summary-type-options">
+                  <label className="summary-type-option">
+                    <input
+                      type="radio"
+                      name="summaryType"
+                      value="standard"
+                      checked={summaryType === 'standard'}
+                      onChange={(e) => setSummaryType(e.target.value)}
+                    />
+                    <div className="option-content">
+                      <div className="option-title">📝 Standard Summary</div>
+                      <div className="option-description">
+                        A brief, out of the box bulleted list of all key points and actions discussed in the meeting.
+                      </div>
+                    </div>
+                  </label>
+
+                  <label className="summary-type-option">
+                    <input
+                      type="radio"
+                      name="summaryType"
+                      value="structured"
+                      checked={summaryType === 'structured'}
+                      onChange={(e) => setSummaryType(e.target.value)}
+                    />
+                    <div className="option-content">
+                      <div className="option-title">📋 Structured Summary</div>
+                      <div className="option-description">
+                        Get a customized summary with specific sections you select below.
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
+                {summaryType === 'structured' && (
+                  <div className="structured-sections">
+                    <h3>Select Sections to Include:</h3>
+                    <div className="section-checkboxes">
+                      <label className="section-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={structuredSections.attendees}
+                          onChange={(e) => setStructuredSections({...structuredSections, attendees: e.target.checked})}
+                        />
+                        <span>👥 Attendees</span>
+                      </label>
+                      
+                      <label className="section-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={structuredSections.purpose}
+                          onChange={(e) => setStructuredSections({...structuredSections, purpose: e.target.checked})}
+                        />
+                        <span>🎯 Main Purpose</span>
+                      </label>
+                      
+                      <label className="section-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={structuredSections.actionItems}
+                          onChange={(e) => setStructuredSections({...structuredSections, actionItems: e.target.checked})}
+                        />
+                        <span>✅ Action Items</span>
+                      </label>
+                      
+                      <label className="section-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={structuredSections.risks}
+                          onChange={(e) => setStructuredSections({...structuredSections, risks: e.target.checked})}
+                        />
+                        <span>⚠️ Risks & Blockers</span>
+                      </label>
+                      
+                      <label className="section-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={structuredSections.questions}
+                          onChange={(e) => setStructuredSections({...structuredSections, questions: e.target.checked})}
+                        />
+                        <span>❓ Open Questions</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="modal-footer">
+                <button className="secondary" onClick={() => setShowSummaryOptionsDialog(false)}>
+                  Cancel
+                </button>
+                <button className="primary" onClick={executeSummarization}>
+                  Generate Summary
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

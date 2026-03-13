@@ -9,6 +9,7 @@ import multer from 'multer';
 import OpenAI from 'openai';
 import PDFDocument from 'pdfkit';
 import { fileURLToPath } from 'url';
+import { AssemblyAI } from 'assemblyai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,9 +23,25 @@ const DEVICE = process.env.DEVICE || 'BlackHole 2ch';
 const MIC = process.env.MIC || 'MacBook Air Microphone';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
-const OPENAI_SUMMARY_MODEL = process.env.OPENAI_SUMMARY_MODEL || 'gpt-4o-mini';
+const OPENAI_SUMMARY_MODEL = process.env.OPENAI_SUMMARY_MODEL || 'gpt-4o';
+
+// OpenRouter configuration (fallback)
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const OPENROUTER_TRANSCRIBE_MODEL = process.env.OPENROUTER_TRANSCRIBE_MODEL || 'openai/whisper-large-v3-turbo';
+const OPENROUTER_SUMMARY_MODEL = process.env.OPENROUTER_SUMMARY_MODEL || 'meta-llama/llama-3.1-8b-instruct:free';
+
+// AssemblyAI configuration (for speaker diarization)
+const ASSEMBLYAI_API_KEY = process.env.ASSEMBLYAI_API_KEY || '';
+
+// Diarization service configuration (local Pyannote - optional)
+const DIARIZATION_URL = process.env.DIARIZATION_URL || 'http://localhost:5000';
 
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+
+// Clear metadata on server startup to reset file status
+if (fs.existsSync(META_PATH)) {
+  fs.unlinkSync(META_PATH);
+}
 
 const app = express();
 app.use(cors());
@@ -38,24 +55,39 @@ const upload = multer({
   dest: OUTPUT_DIR,
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype === 'audio/mpeg' || file.originalname.endsWith('.mp3')) {
+    const allowedMimeTypes = ['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/wav', 'audio/wave'];
+    const allowedExtensions = ['.mp3', '.m4a', '.wav'];
+    const fileExtension = file.originalname.toLowerCase().slice(file.originalname.lastIndexOf('.'));
+    
+    if (allowedMimeTypes.includes(file.mimetype) || allowedExtensions.includes(fileExtension)) {
       cb(null, true);
     } else {
-      cb(new Error('Only MP3 files are allowed'));
+      cb(new Error('Only MP3, M4A, and WAV audio files are allowed'));
     }
   }
 });
 
-// Watson Speech to Text configuration
-const WATSON_STT_API_KEY = process.env.WATSON_STT_API_KEY || '';
-const WATSON_STT_URL = process.env.WATSON_STT_URL || '';
-
-// Watson X.AI configuration
-const WATSONX_API_KEY = process.env.WATSONX_API_KEY || '';
-const WATSONX_PROJECT_ID = process.env.WATSONX_PROJECT_ID || '';
-const WATSONX_URL = process.env.WATSONX_URL || 'https://us-south.ml.cloud.ibm.com';
-// Initialize OpenAI client (for transcription and summarization)
+// Initialize OpenAI client (primary)
 const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+
+// Initialize OpenRouter client (fallback)
+const openrouter = OPENROUTER_API_KEY ? new OpenAI({
+  apiKey: OPENROUTER_API_KEY,
+  baseURL: 'https://openrouter.ai/api/v1',
+  defaultHeaders: {
+    'HTTP-Referer': 'https://ibm-recap.onrender.com',
+    'X-Title': 'IBM Recap'
+  }
+}) : null;
+
+// Initialize AssemblyAI client (for speaker diarization)
+const assemblyai = ASSEMBLYAI_API_KEY ? new AssemblyAI({ apiKey: ASSEMBLYAI_API_KEY }) : null;
+
+// Log configuration status on startup
+console.log('🔧 Service Configuration:');
+console.log(`  OpenAI: ${openai ? '✅ Configured' : '❌ Not configured'}`);
+console.log(`  OpenRouter: ${openrouter ? '✅ Configured' : '❌ Not configured'}`);
+console.log(`  AssemblyAI: ${assemblyai ? '✅ Configured' : '❌ Not configured'}`);
 
 const jobs = new Map();
 
@@ -128,24 +160,259 @@ function runProcess(command, args, opts = {}) {
   });
 }
 
+// Helper function to call diarization service
+async function getDiarization(audioPath) {
+  try {
+    const FormData = (await import('form-data')).default;
+    const form = new FormData();
+    form.append('audio', fs.createReadStream(audioPath));
+    
+    const response = await fetch(`${DIARIZATION_URL}/diarize`, {
+      method: 'POST',
+      body: form,
+      headers: form.getHeaders(),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Diarization service returned ${response.status}`);
+    }
+    
+    const result = await response.json();
+    if (!result.ok) {
+      throw new Error(result.error || 'Diarization failed');
+    }
+    
+    return result.segments;
+  } catch (error) {
+    console.error('Diarization service error:', error);
+    return null; // Return null to fall back to heuristic method
+  }
+}
+
+// Helper function to align Whisper segments with Pyannote speaker labels
+function alignSegmentsWithSpeakers(whisperSegments, diarizationSegments) {
+  if (!diarizationSegments || diarizationSegments.length === 0) {
+    return whisperSegments; // Return original if no diarization data
+  }
+  
+  // Create a map of speaker labels (normalize to Speaker 1, Speaker 2, etc.)
+  const speakerMap = new Map();
+  let speakerCount = 0;
+  
+  return whisperSegments.map(seg => {
+    const segStart = seg.start || 0;
+    const segEnd = seg.end || segStart;
+    const segMid = (segStart + segEnd) / 2;
+    
+    // Find the diarization segment that overlaps with this Whisper segment
+    const diarSeg = diarizationSegments.find(d =>
+      segMid >= d.start && segMid <= d.end
+    );
+    
+    if (diarSeg) {
+      // Normalize speaker labels
+      if (!speakerMap.has(diarSeg.speaker)) {
+        speakerCount++;
+        speakerMap.set(diarSeg.speaker, speakerCount);
+      }
+      
+      return {
+        ...seg,
+        speaker: speakerMap.get(diarSeg.speaker)
+      };
+    }
+    
+    return seg; // No speaker found for this segment
+  });
+}
+
+// Helper function to transcribe with AssemblyAI (includes native speaker diarization)
+async function transcribeWithAssemblyAI(audioPath, transcriptOptions, updateProgress) {
+  if (!assemblyai) {
+    throw new Error('AssemblyAI API key not configured');
+  }
+
+  try {
+    updateProgress(10, 'Uploading audio to AssemblyAI...');
+    
+    // Upload the audio file
+    const uploadUrl = await assemblyai.files.upload(audioPath);
+    
+    updateProgress(20, 'Starting transcription with speaker diarization...');
+    
+    // Configure transcription parameters
+    const config = {
+      audio_url: uploadUrl,
+      speech_models: ['universal-2'], // Required: array of speech models
+      speaker_labels: transcriptOptions.speakerDiarization || false,
+    };
+    
+    // Start transcription
+    const transcript = await assemblyai.transcripts.transcribe(config);
+    
+    if (transcript.status === 'error') {
+      throw new Error(transcript.error || 'Transcription failed');
+    }
+    
+    updateProgress(90, 'Processing transcript...');
+    
+    // Format the transcript
+    const lines = [];
+    let lastSpeaker = null;
+    
+    if (transcript.utterances && transcript.utterances.length > 0) {
+      // Use utterances (speaker-aware segments)
+      for (const utterance of transcript.utterances) {
+        let line = '';
+        
+        // Add timestamp if requested
+        if (transcriptOptions.timestamps) {
+          const startMs = utterance.start;
+          const start = Math.floor(startMs / 1000);
+          const hh = Math.floor(start / 3600);
+          const mm = Math.floor((start % 3600) / 60);
+          const ss = start % 60;
+          const ts = `[${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}]`;
+          line += `${ts} `;
+        }
+        
+        // Add speaker label
+        if (transcriptOptions.speakerDiarization && utterance.speaker) {
+          line += `Speaker ${utterance.speaker}: `;
+        }
+        
+        // Add text with redaction
+        let text = utterance.text || '';
+        if (transcriptOptions.redactWords && transcriptOptions.redactWords.length > 0) {
+          for (const word of transcriptOptions.redactWords) {
+            const regex = new RegExp(`\\b${word}\\b`, 'gi');
+            text = text.replace(regex, '[REDACTED]');
+          }
+        }
+        line += text;
+        
+        if (line.trim()) {
+          lines.push(line);
+        }
+      }
+    } else if (transcript.words && transcript.words.length > 0) {
+      // Fallback to words if no utterances
+      let currentLine = '';
+      let currentStart = null;
+      
+      for (let i = 0; i < transcript.words.length; i++) {
+        const word = transcript.words[i];
+        
+        if (currentStart === null) {
+          currentStart = word.start;
+          
+          if (transcriptOptions.timestamps) {
+            const start = Math.floor(word.start / 1000);
+            const hh = Math.floor(start / 3600);
+            const mm = Math.floor((start % 3600) / 60);
+            const ss = start % 60;
+            const ts = `[${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}]`;
+            currentLine += `${ts} `;
+          }
+        }
+        
+        let wordText = word.text || '';
+        if (transcriptOptions.redactWords && transcriptOptions.redactWords.length > 0) {
+          for (const redactWord of transcriptOptions.redactWords) {
+            const regex = new RegExp(`\\b${redactWord}\\b`, 'gi');
+            wordText = wordText.replace(regex, '[REDACTED]');
+          }
+        }
+        
+        currentLine += wordText + ' ';
+        
+        // Create new line every ~10 seconds or at sentence end
+        const nextWord = transcript.words[i + 1];
+        if (!nextWord || (nextWord.start - currentStart > 10000) || /[.!?]$/.test(wordText)) {
+          if (currentLine.trim()) {
+            lines.push(currentLine.trim());
+          }
+          currentLine = '';
+          currentStart = null;
+        }
+      }
+      
+      if (currentLine.trim()) {
+        lines.push(currentLine.trim());
+      }
+    } else {
+      // Fallback to plain text
+      let text = transcript.text || '';
+      if (transcriptOptions.redactWords && transcriptOptions.redactWords.length > 0) {
+        for (const word of transcriptOptions.redactWords) {
+          const regex = new RegExp(`\\b${word}\\b`, 'gi');
+          text = text.replace(regex, '[REDACTED]');
+        }
+      }
+      lines.push(text);
+    }
+    
+    return {
+      lines,
+      model: 'AssemblyAI'
+    };
+  } catch (error) {
+    console.error('AssemblyAI transcription error:', error);
+    throw error;
+  }
+}
+
 app.get('/api/status', (_req, res) => {
   const meta = readMeta();
+  
+  // Determine active models
+  const transcriptionModel = {
+    primary: OPENAI_API_KEY ? 'OpenAI Whisper' : null,
+    fallback: OPENROUTER_API_KEY ? 'OpenRouter Whisper' : null,
+    active: OPENAI_API_KEY ? 'OpenAI Whisper' : OPENROUTER_API_KEY ? 'OpenRouter Whisper' : 'Not Configured'
+  };
+  
+  const summarizationModel = {
+    primary: OPENAI_API_KEY ? 'GPT-4o' : null,
+    fallback: OPENROUTER_API_KEY ? 'Llama 3.1 8B (Free)' : null,
+    active: OPENAI_API_KEY ? 'GPT-4o' : OPENROUTER_API_KEY ? 'Llama 3.1 8B (Free)' : 'Not Configured'
+  };
+  
+  // Only return file paths if the files actually exist
+  const audioExists = meta.audioPath && fs.existsSync(meta.audioPath);
+  const transcriptExists = meta.transcriptPath && fs.existsSync(meta.transcriptPath);
+  const summaryExists = meta.summaryPath && fs.existsSync(meta.summaryPath);
+  
   res.json({
     ok: true,
     recording: recordingState,
     files: {
-      audio: meta.audioPath || null,
-      transcript: meta.transcriptPath || null,
-      summary: meta.summaryPath || null,
+      audio: audioExists ? meta.audioPath : null,
+      transcript: transcriptExists ? meta.transcriptPath : null,
+      summary: summaryExists ? meta.summaryPath : null,
     },
     config: {
       DEVICE,
       MIC,
-      OPENAI_TRANSCRIBE_MODEL,
-      OPENAI_SUMMARY_MODEL,
-      openaiConfigured: Boolean(OPENAI_API_KEY),
+    },
+    models: {
+      transcription: transcriptionModel,
+      summarization: summarizationModel,
     },
   });
+});
+
+// Clear session endpoint - deletes metadata to reset the UI
+app.post('/api/clear-session', (_req, res) => {
+  try {
+    // Delete the metadata file to reset file status
+    if (fs.existsSync(META_PATH)) {
+      fs.unlinkSync(META_PATH);
+    }
+    res.json({ ok: true, message: 'Session cleared successfully' });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err.message || err) });
+  }
 });
 
 app.get('/api/devices', async (_req, res) => {
@@ -160,6 +427,8 @@ app.get('/api/devices', async (_req, res) => {
 app.get('/api/jobs/:id', (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
+  return res.json({ ok: true, job });
+});
 
 // Upload audio file endpoint
 app.post('/api/upload-audio', upload.single('audio'), (req, res) => {
@@ -169,23 +438,24 @@ app.post('/api/upload-audio', upload.single('audio'), (req, res) => {
     }
 
     const ts = stamp();
-    const finalPath = path.join(OUTPUT_DIR, `teams-call-${ts}.mp3`);
+    // Preserve original file extension
+    const originalExtension = path.extname(req.file.originalname).toLowerCase();
+    const finalPath = path.join(OUTPUT_DIR, `teams-call-${ts}${originalExtension}`);
     
-    // Rename uploaded file to proper name
+    // Rename uploaded file to proper name with original extension
     fs.renameSync(req.file.path, finalPath);
     
-    writeMeta({ audioPath: finalPath });
+    // Update metadata with the uploaded file as the most recent audio
+    writeMeta({ audioPath: finalPath, transcriptPath: null, summaryPath: null });
     
-    return res.json({ 
-      ok: true, 
+    return res.json({
+      ok: true,
       message: 'File uploaded successfully',
-      audioPath: finalPath 
+      audioPath: finalPath
     });
   } catch (err) {
     return res.status(500).json({ ok: false, error: String(err.message || err) });
   }
-});
-  return res.json({ ok: true, job });
 });
 
 app.post('/api/record/start', (_req, res) => {
@@ -194,13 +464,13 @@ app.post('/api/record/start', (_req, res) => {
   }
 
   const ts = stamp();
-  const audioPath = path.join(OUTPUT_DIR, `teams-call-${ts}.m4a`);
+  const audioPath = path.join(OUTPUT_DIR, `teams-call-${ts}.mp3`);
 
   const args = [
     '-f', 'avfoundation', '-i', `:${DEVICE}`,
     '-f', 'avfoundation', '-i', `:${MIC}`,
     '-filter_complex', '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=2',
-    '-c:a', 'aac', '-b:a', '192k',
+    '-c:a', 'libmp3lame', '-b:a', '192k',
     audioPath,
   ];
 
@@ -265,18 +535,12 @@ app.post('/api/record/stop', (_req, res) => {
 
 app.post('/api/transcribe', async (req, res) => {
   try {
-    const model = req.body?.model || 'watson-stt';
-    const apiKey = req.body?.apiKey;
-    
     const meta = readMeta();
     const audioPath = req.body?.audioPath || meta.audioPath;
+    const transcriptOptions = req.body?.transcriptOptions || { timestamps: true };
+    
     if (!audioPath || !fs.existsSync(audioPath)) {
       return res.status(400).json({ ok: false, error: 'Audio file not found. Record a call first.' });
-    }
-
-    // Validate model-specific requirements
-    if (model === 'openai-whisper' && !apiKey && !openai) {
-      return res.status(400).json({ ok: false, error: 'OpenAI API key required for Whisper model' });
     }
 
     const transcriptPath = audioPath.replace(/\.(m4a|mp3)$/i, '.transcript.txt');
@@ -285,54 +549,242 @@ app.post('/api/transcribe', async (req, res) => {
     (async () => {
       try {
         let lines = ['# Transcript', ''];
+        let usedModel = 'unknown';
+        let diarizationSegments = null;
         
-        if (model === 'watson-stt') {
-          // Watson Speech to Text (Free option - simulated for now)
-          updateJob(job.id, { percent: 10, message: 'Processing with Watson STT...' });
-          
-          // Note: This is a placeholder. For actual Watson STT implementation:
-          // 1. Convert audio to WAV format if needed
-          // 2. Use watsonSTT.recognize() with the audio file
-          // 3. Parse the results and format with timestamps
-          
-          updateJob(job.id, { percent: 50, message: 'Transcribing audio...' });
-          
-          // Placeholder transcription
-          lines.push('[00:00:00] Watson Speech to Text transcription would appear here.');
-          lines.push('[00:00:05] This is a placeholder implementation.');
-          lines.push('[00:00:10] To enable Watson STT, configure WATSON_STT_API_KEY and WATSON_STT_URL in .env');
-          
-          updateJob(job.id, { percent: 85, message: 'Formatting transcript...' });
-          
-        } else if (model === 'openai-whisper') {
-          // OpenAI Whisper
-          const openaiClient = apiKey ? new OpenAI({ apiKey }) : openai;
-          if (!openaiClient) {
-            throw new Error('OpenAI client not configured');
+        // Helper function to redact words
+        const redactText = (text) => {
+          if (!transcriptOptions.redactWords || transcriptOptions.redactWords.length === 0) {
+            return text;
           }
-          
-          updateJob(job.id, { percent: 10, message: 'Uploading audio to OpenAI...' });
+          let redacted = text;
+          for (const word of transcriptOptions.redactWords) {
+            const regex = new RegExp(`\\b${word}\\b`, 'gi');
+            redacted = redacted.replace(regex, '[REDACTED]');
+          }
+          return redacted;
+        };
+        
+        // Track if AssemblyAI succeeded
+        let assemblyAISucceeded = false;
+        
+        // Use AssemblyAI if speaker diarization is requested and AssemblyAI is configured
+        if (transcriptOptions.speakerDiarization && assemblyai) {
+          console.log('🎤 Speaker diarization requested - using AssemblyAI');
+          try {
+            const result = await transcribeWithAssemblyAI(
+              audioPath,
+              transcriptOptions,
+              (percent, message) => updateJob(job.id, { percent, message })
+            );
+            lines.push(...result.lines);
+            usedModel = result.model;
+            assemblyAISucceeded = true;
+            console.log('✅ AssemblyAI transcription completed successfully');
+          } catch (assemblyError) {
+            console.error('❌ AssemblyAI transcription failed:', assemblyError);
+            updateJob(job.id, { percent: 10, message: 'AssemblyAI unavailable, using Whisper without speaker diarization...' });
+            // Will fall through to Whisper transcription below
+          }
+        } else if (transcriptOptions.speakerDiarization && !assemblyai) {
+          console.log('⚠️  Speaker diarization requested but AssemblyAI not configured');
+          // Add note that speaker diarization is unavailable
+          lines.push('**Note:** Speaker diarization is currently unavailable. Please configure AssemblyAI API key for speaker identification.');
+          lines.push('');
+          updateJob(job.id, { percent: 10, message: 'Speaker diarization unavailable, proceeding with standard transcription...' });
+        }
+        
+        // Only proceed with Whisper if AssemblyAI didn't succeed
+        if (!assemblyAISucceeded && openai) {
+          try {
+            updateJob(job.id, { percent: 15, message: 'Transcribing with OpenAI Whisper...' });
 
-          const transcription = await openaiClient.audio.transcriptions.create({
+            const whisperParams = {
+              file: fs.createReadStream(audioPath),
+              model: OPENAI_TRANSCRIBE_MODEL,
+              response_format: 'verbose_json',
+            };
+
+            const transcription = await openai.audio.transcriptions.create(whisperParams);
+
+            updateJob(job.id, { percent: 85, message: 'Formatting transcript...' });
+            const segments = transcription.segments || [];
+            
+            if (segments.length) {
+              let lastEndTime = 0;
+              
+              for (let i = 0; i < segments.length; i++) {
+                const seg = segments[i];
+                const start = Math.floor(seg.start || 0);
+                const end = Math.floor(seg.end || 0);
+                const gap = start - lastEndTime;
+                
+                let line = '';
+                
+                // Add timestamp if requested
+                if (transcriptOptions.timestamps) {
+                  const hh = Math.floor(start / 3600);
+                  const mm = Math.floor((start % 3600) / 60);
+                  const ss = start % 60;
+                  const ts = `[${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}]`;
+                  line += `${ts} `;
+                }
+                
+                // Add text with redaction
+                let text = seg.text?.trim() || '';
+                text = redactText(text);
+                line += text;
+                
+                // Add pause indicator if requested and there's a significant pause
+                if (transcriptOptions.pauses && gap > 2 && i > 0) {
+                  line += ` [pause: ${gap}s]`;
+                }
+                
+                if (line.trim()) lines.push(line);
+                lastEndTime = end;
+              }
+            } else {
+              let text = (transcription.text || '').trim();
+              text = redactText(text);
+              lines.push(text);
+            }
+            usedModel = 'OpenAI Whisper';
+          } catch (whisperError) {
+            console.error('OpenAI Whisper failed:', whisperError);
+            console.error('Error details:', {
+              message: whisperError.message,
+              status: whisperError.status,
+              type: whisperError.type,
+              code: whisperError.code
+            });
+            updateJob(job.id, { percent: 10, message: `Whisper failed: ${whisperError.message}. Trying OpenRouter fallback...` });
+            
+            // Fallback to OpenRouter
+            if (openrouter) {
+              updateJob(job.id, { percent: 30, message: 'Transcribing with OpenRouter Whisper...' });
+              
+              const transcription = await openrouter.audio.transcriptions.create({
+                file: fs.createReadStream(audioPath),
+                model: OPENROUTER_TRANSCRIBE_MODEL,
+                response_format: 'verbose_json',
+              });
+
+              updateJob(job.id, { percent: 70, message: 'Aligning speakers with transcript...' });
+              let segments = transcription.segments || [];
+              
+              if (diarizationSegments && segments.length) {
+                segments = alignSegmentsWithSpeakers(segments, diarizationSegments);
+              }
+              
+              updateJob(job.id, { percent: 85, message: 'Formatting transcript...' });
+              
+              if (segments.length) {
+                let lastSpeaker = null;
+                let lastEndTime = 0;
+                
+                for (let i = 0; i < segments.length; i++) {
+                  const seg = segments[i];
+                  const start = Math.floor(seg.start || 0);
+                  const end = Math.floor(seg.end || 0);
+                  const gap = start - lastEndTime;
+                  
+                  let line = '';
+                  
+                  if (transcriptOptions.timestamps) {
+                    const hh = Math.floor(start / 3600);
+                    const mm = Math.floor((start % 3600) / 60);
+                    const ss = start % 60;
+                    const ts = `[${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}]`;
+                    line += `${ts} `;
+                  }
+                  
+                  if (transcriptOptions.speakerDiarization) {
+                    const currentSpeaker = seg.speaker;
+                    
+                    if (currentSpeaker && currentSpeaker !== lastSpeaker) {
+                      line += `Speaker ${currentSpeaker}: `;
+                      lastSpeaker = currentSpeaker;
+                    } else if (!currentSpeaker && !diarizationSegments) {
+                      if (i === 0 || gap > 2) {
+                        const speakerNum = (i === 0 || gap > 2) ? ((lastSpeaker === 1) ? 2 : 1) : lastSpeaker;
+                        line += `Speaker ${speakerNum}: `;
+                        lastSpeaker = speakerNum;
+                      }
+                    }
+                  }
+                  
+                  let text = seg.text?.trim() || '';
+                  text = redactText(text);
+                  line += text;
+                  
+                  if (transcriptOptions.pauses && gap > 2 && i > 0) {
+                    line += ` [pause: ${gap}s]`;
+                  }
+                  
+                  if (line.trim()) lines.push(line);
+                  lastEndTime = end;
+                }
+              } else {
+                let text = (transcription.text || '').trim();
+                text = redactText(text);
+                lines.push(text);
+              }
+              usedModel = 'OpenRouter Whisper (Fallback)';
+            } else {
+              throw new Error('Both OpenAI Whisper and OpenRouter are unavailable. Please configure API keys.');
+            }
+          }
+        } else if (!assemblyAISucceeded && openrouter) {
+          // If OpenAI is not configured and AssemblyAI didn't succeed, use OpenRouter directly
+          updateJob(job.id, { percent: 10, message: 'Transcribing with OpenRouter Whisper...' });
+          
+          const transcription = await openrouter.audio.transcriptions.create({
             file: fs.createReadStream(audioPath),
-            model: OPENAI_TRANSCRIBE_MODEL,
+            model: OPENROUTER_TRANSCRIBE_MODEL,
             response_format: 'verbose_json',
           });
 
           updateJob(job.id, { percent: 85, message: 'Formatting transcript...' });
           const segments = transcription.segments || [];
+          
           if (segments.length) {
-            for (const seg of segments) {
+            let lastEndTime = 0;
+            
+            for (let i = 0; i < segments.length; i++) {
+              const seg = segments[i];
               const start = Math.floor(seg.start || 0);
-              const hh = Math.floor(start / 3600);
-              const mm = Math.floor((start % 3600) / 60);
-              const ss = start % 60;
-              const ts = `[${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}]`;
-              if (seg.text?.trim()) lines.push(`${ts} ${seg.text.trim()}`);
+              const end = Math.floor(seg.end || 0);
+              const gap = start - lastEndTime;
+              
+              let line = '';
+              
+              if (transcriptOptions.timestamps) {
+                const hh = Math.floor(start / 3600);
+                const mm = Math.floor((start % 3600) / 60);
+                const ss = start % 60;
+                const ts = `[${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}]`;
+                line += `${ts} `;
+              }
+              
+              let text = seg.text?.trim() || '';
+              text = redactText(text);
+              line += text;
+              
+              if (transcriptOptions.pauses && gap > 2 && i > 0) {
+                line += ` [pause: ${gap}s]`;
+              }
+              
+              if (line.trim()) lines.push(line);
+              lastEndTime = end;
             }
           } else {
-            lines.push((transcription.text || '').trim());
+            let text = (transcription.text || '').trim();
+            text = redactText(text);
+            lines.push(text);
           }
+          usedModel = 'OpenRouter Whisper';
+        } else if (!assemblyAISucceeded) {
+          throw new Error('No transcription service configured. Please set OPENAI_API_KEY, OPENROUTER_API_KEY, or ASSEMBLYAI_API_KEY.');
         }
 
         // Generate PDF version of transcript
@@ -351,13 +803,45 @@ app.post('/api/transcribe', async (req, res) => {
         
         // Add transcript content
         pdfDoc.fontSize(11);
+        let lastSpeaker = null;
+        
         for (const line of lines) {
           if (line.startsWith('#')) {
+            // Header lines
             pdfDoc.fontSize(14).font('Helvetica-Bold').text(line.replace(/^#\s*/, ''), { continued: false });
             pdfDoc.moveDown(0.5);
             pdfDoc.fontSize(11).font('Helvetica');
           } else if (line.trim()) {
-            pdfDoc.text(line, { continued: false });
+            // Check if line contains a speaker label
+            const speakerMatch = line.match(/^(\[[\d:]+\]\s*)?(Speaker [A-Z]:)\s*(.*)$/);
+            
+            if (speakerMatch) {
+              const timestamp = speakerMatch[1] || '';
+              const speaker = speakerMatch[2];
+              const text = speakerMatch[3];
+              
+              // Add spacing between different speakers
+              if (lastSpeaker && lastSpeaker !== speaker) {
+                pdfDoc.moveDown(1);
+              }
+              
+              // Write timestamp in regular font if present
+              if (timestamp) {
+                pdfDoc.font('Helvetica').text(timestamp, { continued: true });
+              }
+              
+              // Write speaker label in bold
+              pdfDoc.font('Helvetica-Bold').text(speaker + ' ', { continued: true });
+              
+              // Write the rest of the text in regular font
+              pdfDoc.font('Helvetica').text(text, { continued: false });
+              
+              lastSpeaker = speaker;
+            } else {
+              // Regular line without speaker label
+              pdfDoc.font('Helvetica').text(line, { continued: false });
+              lastSpeaker = null;
+            }
           }
         }
         
@@ -373,6 +857,8 @@ app.post('/api/transcribe', async (req, res) => {
           result: { transcriptPath },
         });
       } catch (err) {
+        console.error('Transcription error:', err);
+        console.error('Error stack:', err.stack);
         updateJob(job.id, {
           status: 'error',
           percent: 100,
@@ -390,22 +876,12 @@ app.post('/api/transcribe', async (req, res) => {
 
 app.post('/api/summarize', async (req, res) => {
   try {
-    const model = req.body?.model || 'free';
-    const apiKey = req.body?.apiKey;
-    const projectId = req.body?.projectId;
+    const customPrompt = req.body?.customPrompt;
 
     const meta = readMeta();
     const transcriptPath = req.body?.transcriptPath || meta.transcriptPath;
     if (!transcriptPath || !fs.existsSync(transcriptPath)) {
       return res.status(400).json({ ok: false, error: 'Transcript file not found. Transcribe first.' });
-    }
-
-    // Validate model-specific requirements
-    if (model === 'openai' && !apiKey && !openai) {
-      return res.status(400).json({ ok: false, error: 'OpenAI API key required' });
-    }
-    if (model === 'watsonx' && (!apiKey || !projectId)) {
-      return res.status(400).json({ ok: false, error: 'WatsonX API key and Project ID required' });
     }
 
     const summaryPath = transcriptPath.replace(/\.transcript\.txt$/i, '.summary.md');
@@ -416,7 +892,8 @@ app.post('/api/summarize', async (req, res) => {
       try {
         updateJob(job.id, { percent: 10, message: 'Preparing summarization...' });
         
-        const systemPrompt = `You are a concise meeting analyst. Return ONLY markdown (no preface) with exactly these sections:
+        // Use custom prompt if provided, otherwise use default
+        const systemPrompt = customPrompt || `You are a concise meeting analyst. Return ONLY markdown (no preface) with exactly these sections:
 ## Meeting purpose
 ## Key discussion points
 ## Decisions made
@@ -432,67 +909,54 @@ Rules:
 - If no evidence for a section, write: - None captured.`;
 
         let summary = '';
+        let usedModel = 'unknown';
 
-        if (model === 'free') {
-          // Basic free summarization (simple extraction)
-          updateJob(job.id, { percent: 35, message: 'Generating basic summary...' });
-          
-          summary = `## Meeting purpose
-- Automated summary from transcript
+        // Try OpenAI GPT-4o first (primary)
+        if (openai) {
+          try {
+            updateJob(job.id, { percent: 35, message: 'Generating summary with GPT-4o...' });
+            const response = await openai.chat.completions.create({
+              model: OPENAI_SUMMARY_MODEL,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: `TRANSCRIPT:\n${transcript}` },
+              ],
+              temperature: 0.3,
+              max_tokens: 2000,
+            });
 
-## Key discussion points
-- This is a basic free summary
-- For detailed AI-powered summaries, use OpenAI or WatsonX models
-- Key topics discussed in the meeting
+            summary = (response.choices[0]?.message?.content || '').trim();
+            usedModel = 'GPT-4o';
+          } catch (gptError) {
+            console.error('GPT-4o failed, falling back to OpenRouter:', gptError);
+            updateJob(job.id, { percent: 35, message: 'GPT-4o failed, trying OpenRouter fallback...' });
+            
+            // Fallback to OpenRouter
+            if (openrouter) {
+              updateJob(job.id, { percent: 50, message: 'Generating summary with Llama 3.1 8B...' });
+              
+              const response = await openrouter.chat.completions.create({
+                model: OPENROUTER_SUMMARY_MODEL,
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  { role: 'user', content: `TRANSCRIPT:\n${transcript}` },
+                ],
+                temperature: 0.3,
+                max_tokens: 2000,
+              });
 
-## Decisions made
-- None captured.
-
-## Action items
-- None captured.
-
-## Risks / blockers
-- None captured.
-
-## Open questions
-- None captured.`;
-
-        } else if (model === 'watsonx') {
-          // WatsonX.AI summarization
-          updateJob(job.id, { percent: 35, message: 'Generating summary with WatsonX.AI...' });
-          
-          // Placeholder for WatsonX implementation
-          // To implement: Use watsonxAI.textGeneration() with appropriate model
-          summary = `## Meeting purpose
-- WatsonX.AI summary would appear here
-
-## Key discussion points
-- This is a placeholder for WatsonX.AI integration
-- Configure WATSONX_API_KEY and WATSONX_PROJECT_ID in .env
-- Or provide credentials via the UI
-
-## Decisions made
-- None captured.
-
-## Action items
-- None captured.
-
-## Risks / blockers
-- None captured.
-
-## Open questions
-- None captured.`;
-
-        } else if (model === 'openai') {
-          // OpenAI GPT summarization
-          const openaiClient = apiKey ? new OpenAI({ apiKey }) : openai;
-          if (!openaiClient) {
-            throw new Error('OpenAI client not configured');
+              summary = (response.choices[0]?.message?.content || '').trim();
+              usedModel = 'Llama 3.1 8B (OpenRouter Fallback)';
+            } else {
+              throw new Error('Both GPT-4o and OpenRouter are unavailable. Please configure API keys.');
+            }
           }
+        } else if (openrouter) {
+          // If OpenAI is not configured, use OpenRouter directly
+          updateJob(job.id, { percent: 35, message: 'Generating summary with Llama 3.1 8B...' });
           
-          updateJob(job.id, { percent: 35, message: 'Generating summary with OpenAI...' });
-          const response = await openaiClient.chat.completions.create({
-            model: OPENAI_SUMMARY_MODEL,
+          const response = await openrouter.chat.completions.create({
+            model: OPENROUTER_SUMMARY_MODEL,
             messages: [
               { role: 'system', content: systemPrompt },
               { role: 'user', content: `TRANSCRIPT:\n${transcript}` },
@@ -502,6 +966,9 @@ Rules:
           });
 
           summary = (response.choices[0]?.message?.content || '').trim();
+          usedModel = 'Llama 3.1 8B (OpenRouter)';
+        } else {
+          throw new Error('No summarization service configured. Please set OPENAI_API_KEY or OPENROUTER_API_KEY.');
         }
 
         updateJob(job.id, { percent: 85, message: 'Writing summary file...' });
@@ -527,18 +994,62 @@ Rules:
         for (const line of summaryLines) {
           if (line.startsWith('## ')) {
             summaryPdfDoc.moveDown(0.5);
-            summaryPdfDoc.fontSize(14).font('Helvetica-Bold').text(line.replace(/^##\s*/, ''), { continued: false });
+            summaryPdfDoc.fontSize(14).font('Helvetica-Bold').text(line.replace(/^##\s*/, ''));
             summaryPdfDoc.moveDown(0.3);
             summaryPdfDoc.fontSize(11).font('Helvetica');
           } else if (line.startsWith('# ')) {
             summaryPdfDoc.moveDown(0.5);
-            summaryPdfDoc.fontSize(16).font('Helvetica-Bold').text(line.replace(/^#\s*/, ''), { continued: false });
+            summaryPdfDoc.fontSize(16).font('Helvetica-Bold').text(line.replace(/^#\s*/, ''));
             summaryPdfDoc.moveDown(0.3);
             summaryPdfDoc.fontSize(11).font('Helvetica');
+          } else if (line.trim().startsWith('**') && line.trim().endsWith('**')) {
+            // This is a bold section header (e.g., **List of attendees**)
+            const headerText = line.trim().slice(2, -2); // Remove ** from both ends
+            summaryPdfDoc.moveDown(0.5);
+            summaryPdfDoc.fontSize(12).font('Helvetica-Bold').text(headerText);
+            summaryPdfDoc.moveDown(0.2);
+            summaryPdfDoc.fontSize(11).font('Helvetica');
           } else if (line.trim().startsWith('- ')) {
-            summaryPdfDoc.text(line, { indent: 20, continued: false });
+            // Handle bullet points - preserve bold formatting
+            let bulletText = line.trim().substring(2); // Remove "- "
+            
+            // Check if the bullet contains bold text (e.g., **Action items**)
+            const boldPattern = /\*\*([^*]+)\*\*/g;
+            const parts = [];
+            let lastIndex = 0;
+            let match;
+            
+            while ((match = boldPattern.exec(bulletText)) !== null) {
+              // Add text before the bold part
+              if (match.index > lastIndex) {
+                parts.push({ text: bulletText.substring(lastIndex, match.index), bold: false });
+              }
+              // Add the bold part
+              parts.push({ text: match[1], bold: true });
+              lastIndex = match.index + match[0].length;
+            }
+            
+            // Add any remaining text after the last bold part
+            if (lastIndex < bulletText.length) {
+              parts.push({ text: bulletText.substring(lastIndex), bold: false });
+            }
+            
+            // If no bold parts found, treat as regular text
+            if (parts.length === 0) {
+              summaryPdfDoc.text(`  • ${bulletText}`, { indent: 20 });
+            } else {
+              // Render with mixed formatting
+              summaryPdfDoc.text('  • ', { continued: true, indent: 20 });
+              parts.forEach((part, index) => {
+                summaryPdfDoc.font(part.bold ? 'Helvetica-Bold' : 'Helvetica')
+                  .text(part.text, { continued: index < parts.length - 1 });
+              });
+              summaryPdfDoc.font('Helvetica'); // Reset to regular font
+            }
           } else if (line.trim()) {
-            summaryPdfDoc.text(line, { continued: false });
+            // Regular paragraph text - remove any ** markers
+            let paragraphText = line.replace(/\*\*/g, ''); // Remove all ** markers
+            summaryPdfDoc.text(paragraphText);
           } else {
             summaryPdfDoc.moveDown(0.3);
           }

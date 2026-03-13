@@ -1,0 +1,17 @@
+---
+applications:
+- name: ibm-recap
+  memory: 512M
+  instances: 1
+  buildpack: nodejs_buildpack
+  command: node server/index.js
+  disk_quota: 1G
+  health-check-type: http
+  health-check-http-endpoint: /api/status
+  timeout: 180
+  env:
+    NODE_ENV: production
+  services:
+    - ibm-recap-appid
+
+# Made with Bob

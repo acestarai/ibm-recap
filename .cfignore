@@ -1,0 +1,14 @@
+# Cloud Foundry ignore file
+node_modules/
+.env
+.DS_Store
+.git/
+.vscode/
+output/
+*.log
+npm-debug.log*
+.github/
+GITHUB_SETUP.md
+QUICK_START.md
+FIX_PUSH_ISSUE.md
+TOKEN_FIX.md

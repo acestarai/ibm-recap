@@ -1,0 +1,25 @@
+name: Deploy to Hostinger VPS (Self-Hosted)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Deploy application
+      run: |
+        cd /var/www/ibm-recap
+        git pull origin main
+        npm install
+        pm2 restart ibm-recap
+        pm2 save
+        echo "Deployment completed successfully!"
+
+# Made with Bob
