@@ -55,10 +55,18 @@ body:not(.dark-mode) .panel-header h2 {
   color: #161616;
 }
 
+body:not(.dark-mode) .panel-subtitle {
+  color: #161616;
+}
+
 body:not(.dark-mode) .card {
   background: #ffffff;
   color: #161616;
   border: 1px solid #e0e0e0;
+}
+
+body:not(.dark-mode) .card h3 {
+  color: #161616;
 }
 
 body:not(.dark-mode) .card p,

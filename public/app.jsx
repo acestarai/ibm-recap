@@ -555,9 +555,6 @@ function App() {
           <div className="panel-header">
             <h2>Meeting Recording & Analysis</h2>
             <p className="panel-subtitle">Record/Upload, Transcribe and Summarize your meetings</p>
-            <div className="keyboard-shortcuts-hint">
-              <span title="Keyboard Shortcuts">⌨️ Ctrl+U: Upload | Ctrl+T: Transcribe | Ctrl+S: Summarize</span>
-            </div>
           </div>
 
           <div className="panel-content">
