@@ -472,6 +472,7 @@ function App() {
           <span className="ibm-logo">IBM</span>
           <span className="app-name">Recap</span>
         </h1>
+        <div className="header-spacer"></div>
         <button
           className="theme-toggle"
           onClick={toggleDarkMode}

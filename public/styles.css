@@ -11,51 +11,65 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* Light Mode */
+/* Light Mode - Only change main background to white, keep header blue */
 body:not(.dark-mode) {
-  background: #f4f4f4;
+  background: #ffffff;
   color: #161616;
 }
 
-body:not(.dark-mode) .container {
-  background: #ffffff;
-}
-
+/* Keep header blue in light mode */
 body:not(.dark-mode) .header {
-  background: #ffffff;
-  border-bottom: 1px solid #e0e0e0;
+  background: #0f62fe; /* IBM Blue */
+  color: #ffffff;
 }
 
+body:not(.dark-mode) .header h1 {
+  color: #ffffff;
+}
+
+/* Status bar - white background, black text */
 body:not(.dark-mode) .model-status-bar {
-  background: #f4f4f4;
+  background: #ffffff;
+  color: #161616;
   border-bottom: 1px solid #e0e0e0;
 }
 
+body:not(.dark-mode) .status-label,
+body:not(.dark-mode) .status-value {
+  color: #161616;
+}
+
+/* Main panels - white background, black text */
 body:not(.dark-mode) .main-panel {
   background: #ffffff;
+  color: #161616;
 }
 
 body:not(.dark-mode) .panel-header {
-  background: #f4f4f4;
+  background: #ffffff;
+  color: #161616;
   border-bottom: 1px solid #e0e0e0;
+}
+
+body:not(.dark-mode) .panel-header h2 {
+  color: #161616;
 }
 
 body:not(.dark-mode) .card {
   background: #ffffff;
+  color: #161616;
   border: 1px solid #e0e0e0;
 }
 
-body:not(.dark-mode) .modal-content {
-  background: #ffffff;
+body:not(.dark-mode) .card p,
+body:not(.dark-mode) .card label {
   color: #161616;
 }
 
-body:not(.dark-mode) .modal-header {
-  border-bottom: 1px solid #e0e0e0;
-}
-
+/* Keep buttons in original colors */
 body:not(.dark-mode) button.primary {
   background: #0f62fe;
+  color: #ffffff;
 }
 
 body:not(.dark-mode) button.secondary {
@@ -68,9 +82,18 @@ body:not(.dark-mode) button.secondary:hover:not(:disabled) {
 }
 
 body:not(.dark-mode) .log {
-  background: #f4f4f4;
+  background: #ffffff;
   border: 1px solid #e0e0e0;
   color: #161616;
+}
+
+body:not(.dark-mode) .modal-content {
+  background: #ffffff;
+  color: #161616;
+}
+
+body:not(.dark-mode) .modal-header {
+  border-bottom: 1px solid #e0e0e0;
 }
 
 body:not(.dark-mode) .drop-overlay {
@@ -80,6 +103,16 @@ body:not(.dark-mode) .drop-overlay {
 body:not(.dark-mode) .drop-message {
   color: #161616;
   border-color: #0f62fe;
+}
+
+body:not(.dark-mode) .keyboard-shortcuts {
+  background: rgba(15, 98, 254, 0.05);
+  color: #161616;
+  border-color: #0f62fe;
+}
+
+body:not(.dark-mode) .keyboard-shortcuts strong {
+  color: #0f62fe;
 }
 
 /* Modal Overlay */
@@ -350,9 +383,14 @@ body:not(.dark-mode) .drop-message {
   padding: 20px 32px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   box-shadow: 0 4px 12px rgba(15, 98, 254, 0.3);
   position: relative;
   overflow: hidden;
+}
+
+.header-spacer {
+  flex: 1;
 }
 
 .header::before {
@@ -1331,32 +1369,38 @@ code {
 
 /* Theme Toggle Button */
 .theme-toggle {
-  background: transparent;
-  border: 1px solid #525252;
-  color: #f4f4f4;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #ffffff;
   padding: 8px 12px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 20px;
   display: flex;
   align-items: center;
   gap: 6px;
   transition: all 0.2s ease;
+  position: relative;
+  z-index: 2;
 }
 
 .theme-toggle:hover {
-  background: #393939;
-  border-color: #0f62fe;
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: scale(1.05);
 }
 
+/* Light mode - keep button styled for blue header */
 body:not(.dark-mode) .theme-toggle {
-  border-color: #8d8d8d;
-  color: #161616;
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #ffffff;
 }
 
 body:not(.dark-mode) .theme-toggle:hover {
-  background: #e0e0e0;
-  border-color: #0f62fe;
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.6);
+  transform: scale(1.05);
 }
 
 /* Drag and Drop Overlay */
