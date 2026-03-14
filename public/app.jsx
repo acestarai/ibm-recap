@@ -476,7 +476,11 @@ function App() {
   return (
     <div className="container">
       <div className="header">
-        <h1>
+        <h1
+          onClick={handleClearSession}
+          style={{ cursor: 'pointer' }}
+          title="Click to refresh and clear session"
+        >
           <span className="ibm-logo">IBM</span>
           <span className="app-name">Recap</span>
         </h1>
@@ -531,14 +535,6 @@ function App() {
               <span className={files.transcript ? 'file-ready' : 'file-missing'}>Transcript {files.transcript ? '✓' : '✗'}</span>
               <span className={files.summary ? 'file-ready' : 'file-missing'}>Summary {files.summary ? '✓' : '✗'}</span>
             </div>
-            <button
-              className="refresh-button"
-              onClick={handleClearSession}
-              disabled={busy}
-              title="Refresh file status"
-            >
-              🔄 Refresh
-            </button>
           </div>
         </div>
 

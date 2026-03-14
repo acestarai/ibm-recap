@@ -403,6 +403,12 @@ body:not(.dark-mode) .modal-header {
   position: relative;
   z-index: 1;
   letter-spacing: -0.5px;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.header h1:hover {
+  transform: scale(1.02);
+  opacity: 0.9;
 }
 
 .ibm-logo {
