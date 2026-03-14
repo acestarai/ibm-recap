@@ -56,7 +56,15 @@ function App() {
     const isStopping = !!j.recording?.isStopping;
     setRecording(isRec);
     setStopping(isStopping);
-    setFiles(j.files || {});
+    
+    // Normalize files object - ensure null values for missing files
+    const normalizedFiles = {
+      audio: j.files?.audio || null,
+      transcript: j.files?.transcript || null,
+      summary: j.files?.summary || null
+    };
+    setFiles(normalizedFiles);
+    
     setModels(j.models || { transcription: {}, summarization: {} });
     setStatus(isStopping ? 'Stopping recording...' : isRec ? 'Recording in progress' : 'Idle');
   };
