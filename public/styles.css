@@ -112,6 +112,19 @@ body:not(.dark-mode) .modal-body p {
   color: #161616;
 }
 
+/* Progress bars in light mode */
+body:not(.dark-mode) .progress-label {
+  color: #161616;
+}
+
+body:not(.dark-mode) .progress-percent {
+  color: #0f62fe;
+}
+
+body:not(.dark-mode) .progress-message {
+  color: #161616;
+}
+
 /* Modal Overlay */
 .modal-overlay {
   position: fixed;
