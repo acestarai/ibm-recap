@@ -15,11 +15,11 @@ jobs:
     
     - name: Deploy application
       run: |
-        cd /var/www/ibm-recap
+        cd ~/ibm-recap
         git pull origin main
         npm install
-        pm2 restart ibm-recap
-        pm2 save
+        npx pm2 restart ibm-recap || npx pm2 start server/index.js --name ibm-recap
+        npx pm2 save
         echo "Deployment completed successfully!"
 
 # Made with Bob
