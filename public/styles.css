@@ -104,6 +104,14 @@ body:not(.dark-mode) .modal-header {
   border-bottom: 1px solid #e0e0e0;
 }
 
+body:not(.dark-mode) .modal-header h2 {
+  color: #161616;
+}
+
+body:not(.dark-mode) .modal-body p {
+  color: #161616;
+}
+
 /* Modal Overlay */
 .modal-overlay {
   position: fixed;
