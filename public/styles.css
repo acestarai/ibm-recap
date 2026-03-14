@@ -1395,7 +1395,12 @@ body:not(.dark-mode) .theme-toggle:hover {
 /* Upload Drop Zone - Only over Upload Button */
 .upload-drop-zone {
   position: relative;
-  display: inline-block;
+  display: flex;
+  flex: 1;
+}
+
+.upload-drop-zone button {
+  width: 100%;
 }
 
 .drop-overlay-button {
