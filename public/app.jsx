@@ -495,13 +495,8 @@ function App() {
       </div>
 
       <div className="main-content">
-        {/* Status Bar with Title and Files */}
+        {/* File Status Bar */}
         <div className="model-status-bar">
-          <div className="status-section">
-            <h2 style={{ margin: 0, fontSize: '1.5rem' }}>Meeting Recording & Analysis</h2>
-            <p className="panel-subtitle" style={{ margin: '4px 0 0 0', fontSize: '0.9rem', opacity: 0.8 }}>Record/Upload, Transcribe and Summarize your meetings</p>
-          </div>
-          
           <div className="status-section" style={{ marginLeft: 'auto' }}>
             <div className="status-label">Files:</div>
             <div className="status-value">
