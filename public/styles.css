@@ -8,6 +8,78 @@ body {
   margin: 0;
   background: #161616; /* IBM Gray 100 - Dark background */
   color: #f4f4f4; /* IBM Gray 10 - Light text */
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Light Mode */
+body:not(.dark-mode) {
+  background: #f4f4f4;
+  color: #161616;
+}
+
+body:not(.dark-mode) .container {
+  background: #ffffff;
+}
+
+body:not(.dark-mode) .header {
+  background: #ffffff;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+body:not(.dark-mode) .model-status-bar {
+  background: #f4f4f4;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+body:not(.dark-mode) .main-panel {
+  background: #ffffff;
+}
+
+body:not(.dark-mode) .panel-header {
+  background: #f4f4f4;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+body:not(.dark-mode) .card {
+  background: #ffffff;
+  border: 1px solid #e0e0e0;
+}
+
+body:not(.dark-mode) .modal-content {
+  background: #ffffff;
+  color: #161616;
+}
+
+body:not(.dark-mode) .modal-header {
+  border-bottom: 1px solid #e0e0e0;
+}
+
+body:not(.dark-mode) button.primary {
+  background: #0f62fe;
+}
+
+body:not(.dark-mode) button.secondary {
+  background: #393939;
+  color: #ffffff;
+}
+
+body:not(.dark-mode) button.secondary:hover:not(:disabled) {
+  background: #4c4c4c;
+}
+
+body:not(.dark-mode) .log {
+  background: #f4f4f4;
+  border: 1px solid #e0e0e0;
+  color: #161616;
+}
+
+body:not(.dark-mode) .drop-overlay {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+body:not(.dark-mode) .drop-message {
+  color: #161616;
+  border-color: #0f62fe;
 }
 
 /* Modal Overlay */
@@ -1255,3 +1327,147 @@ code {
 }
 
 /* Made with Bob */
+
+
+/* Theme Toggle Button */
+.theme-toggle {
+  background: transparent;
+  border: 1px solid #525252;
+  color: #f4f4f4;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.theme-toggle:hover {
+  background: #393939;
+  border-color: #0f62fe;
+}
+
+body:not(.dark-mode) .theme-toggle {
+  border-color: #8d8d8d;
+  color: #161616;
+}
+
+body:not(.dark-mode) .theme-toggle:hover {
+  background: #e0e0e0;
+  border-color: #0f62fe;
+}
+
+/* Drag and Drop Overlay */
+.drop-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(22, 22, 22, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  backdrop-filter: blur(8px);
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.drop-message {
+  text-align: center;
+  padding: 40px;
+  border: 3px dashed #0f62fe;
+  border-radius: 12px;
+  background: rgba(15, 98, 254, 0.1);
+  color: #f4f4f4;
+  font-size: 24px;
+  font-weight: 500;
+  max-width: 500px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+.drop-message svg {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 16px;
+  color: #0f62fe;
+}
+
+/* Keyboard Shortcuts Hint */
+.keyboard-shortcuts {
+  margin-top: 16px;
+  padding: 12px;
+  background: rgba(15, 98, 254, 0.1);
+  border: 1px solid #0f62fe;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #c6c6c6;
+}
+
+body:not(.dark-mode) .keyboard-shortcuts {
+  background: rgba(15, 98, 254, 0.05);
+  color: #525252;
+}
+
+.keyboard-shortcuts strong {
+  color: #0f62fe;
+  font-weight: 600;
+}
+
+.keyboard-shortcuts div {
+  margin: 4px 0;
+}
+
+/* Enhanced Upload Button for Drag-and-Drop */
+.upload-button {
+  position: relative;
+  overflow: hidden;
+}
+
+.upload-button.dragging {
+  background: #0353e9;
+  border-color: #0353e9;
+  transform: scale(1.05);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .theme-toggle {
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+  
+  .drop-message {
+    font-size: 20px;
+    padding: 30px;
+  }
+  
+  .drop-message svg {
+    width: 48px;
+    height: 48px;
+  }
+  
+  .keyboard-shortcuts {
+    font-size: 12px;
+  }
+}

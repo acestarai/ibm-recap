@@ -5,6 +5,17 @@ function App() {
   const [consentGiven, setConsentGiven] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
   
+  // Theme state
+  const [darkMode, setDarkMode] = useState(() => {
+    // Check localStorage or system preference
+    const saved = localStorage.getItem('darkMode');
+    if (saved !== null) return saved === 'true';
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+  
+  // Drag and drop state
+  const [isDragging, setIsDragging] = useState(false);
+  
   // Main app state
   const [status, setStatus] = useState('Loading...');
   const [busy, setBusy] = useState(false);
@@ -50,11 +61,59 @@ function App() {
     setStatus(isStopping ? 'Stopping recording...' : isRec ? 'Recording in progress' : 'Idle');
   };
 
-  useEffect(() => { 
+  // Apply dark mode class to body
+  useEffect(() => {
+    document.body.classList.toggle('dark-mode', darkMode);
+    localStorage.setItem('darkMode', darkMode);
+  }, [darkMode]);
+  
+  // Toggle dark mode function
+  const toggleDarkMode = () => {
+    setDarkMode(!darkMode);
+  };
+  
+  useEffect(() => {
     if (currentPage === 'main') {
-      refresh(); 
+      refresh();
     }
   }, [currentPage]);
+  
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Only on main page and when not in an input field
+      if (currentPage !== 'main' || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        return;
+      }
+      
+      // Ctrl+U or Cmd+U: Upload
+      if ((e.ctrlKey || e.metaKey) && e.key === 'u') {
+        e.preventDefault();
+        if (!busy && !recording) {
+          document.getElementById('audio-upload').click();
+        }
+      }
+      
+      // Ctrl+T or Cmd+T: Transcribe
+      if ((e.ctrlKey || e.metaKey) && e.key === 't') {
+        e.preventDefault();
+        if (!busy && files.audio && !recording && !stopping && (!transcribeJob || transcribeJob.status !== 'running')) {
+          handleTranscribe();
+        }
+      }
+      
+      // Ctrl+S or Cmd+S: Summarize
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        if (!busy && files.transcript && !recording && !stopping && (!summarizeJob || summarizeJob.status !== 'running')) {
+          handleSummarize();
+        }
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentPage, busy, recording, stopping, files, transcribeJob, summarizeJob]);
 
   const call = async (url, method = 'POST', body) => {
     try {
@@ -90,9 +149,18 @@ function App() {
     await refresh();
   };
 
-  const handleFileUpload = async (event) => {
-    const file = event.target.files[0];
+  const uploadFile = async (file) => {
     if (!file) return;
+    
+    // Validate file type
+    const validTypes = ['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/wav', 'audio/wave'];
+    const validExtensions = ['.mp3', '.m4a', '.wav'];
+    const fileExtension = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
+    
+    if (!validTypes.includes(file.type) && !validExtensions.includes(fileExtension)) {
+      setLog(`Invalid file type. Please upload MP3, M4A, or WAV files.`);
+      return;
+    }
     
     const formData = new FormData();
     formData.append('audio', file);
@@ -110,13 +178,53 @@ function App() {
       // Small delay to ensure metadata is written
       await new Promise(resolve => setTimeout(resolve, 100));
       await refresh();
-      
-      // Clear the file input so the same file can be uploaded again
-      event.target.value = '';
     } catch (e) {
       setLog(`Upload error: ${e.message}`);
     } finally {
       setBusy(false);
+    }
+  };
+  
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    await uploadFile(file);
+    // Clear the file input so the same file can be uploaded again
+    event.target.value = '';
+  };
+  
+  // Drag and drop handlers
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!busy && !recording) {
+      setIsDragging(true);
+    }
+  };
+  
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only set to false if leaving the main drop zone
+    if (e.target.classList.contains('drop-zone')) {
+      setIsDragging(false);
+    }
+  };
+  
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    
+    if (busy || recording) return;
+    
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      await uploadFile(files[0]);
     }
   };
 
@@ -364,6 +472,13 @@ function App() {
           <span className="ibm-logo">IBM</span>
           <span className="app-name">Recap</span>
         </h1>
+        <button
+          className="theme-toggle"
+          onClick={toggleDarkMode}
+          title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+        >
+          {darkMode ? '☀️' : '🌙'}
+        </button>
       </div>
 
       <div className="main-content">
@@ -419,10 +534,29 @@ function App() {
         </div>
 
         {/* Main Panel */}
-        <div className="main-panel">
+        <div
+          className={`main-panel drop-zone ${isDragging ? 'dragging' : ''}`}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+        >
+          {isDragging && (
+            <div className="drop-overlay">
+              <div className="drop-message">
+                <div className="drop-icon">📁</div>
+                <div className="drop-text">Drop audio file here</div>
+                <div className="drop-subtext">Supports MP3, M4A, and WAV files</div>
+              </div>
+            </div>
+          )}
+          
           <div className="panel-header">
             <h2>Meeting Recording & Analysis</h2>
             <p className="panel-subtitle">Record/Upload, Transcribe and Summarize your meetings</p>
+            <div className="keyboard-shortcuts-hint">
+              <span title="Keyboard Shortcuts">⌨️ Ctrl+U: Upload | Ctrl+T: Transcribe | Ctrl+S: Summarize</span>
+            </div>
           </div>
 
           <div className="panel-content">
