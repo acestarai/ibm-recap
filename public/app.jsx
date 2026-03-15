@@ -144,6 +144,16 @@ function App() {
     { id: 'analytics', label: 'Analytics', icon: '📈', disabled: true }
   ];
 
+  // Ref for scrolling to home dashboard
+  const homeDashboardRef = React.useRef(null);
+  
+  const scrollToHomeDashboard = () => {
+    setActiveTab('home');
+    setTimeout(() => {
+      homeDashboardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  };
+
   return (
     <div className="app-container">
       {/* Header */}
@@ -170,6 +180,61 @@ function App() {
         </div>
       </header>
 
+      {/* Hero Section */}
+      <section className="hero-section-wrapper">
+        <div className="hero-section">
+          <div className="hero-content">
+            <h1 className="hero-title">From meeting chaos to structured documentation in minutes.</h1>
+            <p className="hero-description">
+              Transform your Microsoft Teams meetings into actionable insights. IBM Recap automatically transcribes,
+              summarizes, and organizes your conversations—giving you more time to focus on what matters.
+            </p>
+            
+            {/* Hero Action Buttons */}
+            <div className="hero-actions">
+              <button className="hero-btn hero-btn-primary" onClick={scrollToHomeDashboard}>
+                View Home Dashboard
+              </button>
+              <button className="hero-btn hero-btn-secondary" onClick={() => setActiveTab('upload')}>
+                Jump to upload flow
+              </button>
+              <button className="hero-btn hero-btn-tertiary" onClick={() => setActiveTab('analytics')}>
+                Preview analytics
+              </button>
+            </div>
+            
+            {/* Hero Stats */}
+            <div className="hero-stats">
+              <div className="hero-stat-card">
+                <div className="hero-stat-label">Average turnaround</div>
+                <div className="hero-stat-value">4.2 min</div>
+                <div className="hero-stat-desc">Audio → transcript → summary</div>
+              </div>
+              <div className="hero-stat-card">
+                <div className="hero-stat-label">Transcript accuracy</div>
+                <div className="hero-stat-value">95%</div>
+                <div className="hero-stat-desc">With timestamps and speaker ID</div>
+              </div>
+              <div className="hero-stat-card">
+                <div className="hero-stat-label">Searchable records</div>
+                <div className="hero-stat-value">1,248</div>
+                <div className="hero-stat-desc">Across Teams and uploads</div>
+              </div>
+            </div>
+          </div>
+          <div className="hero-video">
+            <video
+              controls
+              className="demo-video"
+              poster="/video-poster.jpg"
+            >
+              <source src="/ibm-recap-demo.mp4" type="video/mp4" />
+              Your browser does not support the video tag.
+            </video>
+          </div>
+        </div>
+      </section>
+
       {/* Tab Navigation */}
       <nav className="tab-navigation">
         {tabs.map(tab => (
@@ -187,11 +252,12 @@ function App() {
 
       {/* Main Content Area */}
       <main className="main-content-area">
-        {activeTab === 'home' && <HomeTab 
+        {activeTab === 'home' && <HomeTab
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
           filteredFiles={filteredFiles}
           setActiveTab={setActiveTab}
+          homeDashboardRef={homeDashboardRef}
         />}
         
         {activeTab === 'upload' && <UploadTab 
@@ -242,63 +308,10 @@ function App() {
 }
 
 // Home Tab Component
-function HomeTab({ searchQuery, setSearchQuery, filteredFiles, setActiveTab }) {
+function HomeTab({ searchQuery, setSearchQuery, filteredFiles, setActiveTab, homeDashboardRef }) {
   return (
     <div className="home-tab">
-      {/* Hero Section */}
-      <div className="hero-section">
-        <div className="hero-content">
-          <h1 className="hero-title">From meeting chaos to structured documentation in minutes.</h1>
-          <p className="hero-description">
-            Transform your Microsoft Teams meetings into actionable insights. IBM Recap automatically transcribes,
-            summarizes, and organizes your conversations—giving you more time to focus on what matters.
-          </p>
-          
-          {/* Hero Action Buttons */}
-          <div className="hero-actions">
-            <button className="hero-btn hero-btn-primary" onClick={() => setActiveTab('home')}>
-              View home screen
-            </button>
-            <button className="hero-btn hero-btn-secondary" onClick={() => setActiveTab('upload')}>
-              Jump to upload flow
-            </button>
-            <button className="hero-btn hero-btn-tertiary" onClick={() => setActiveTab('analytics')}>
-              Preview analytics
-            </button>
-          </div>
-          
-          {/* Hero Stats */}
-          <div className="hero-stats">
-            <div className="hero-stat-card">
-              <div className="hero-stat-label">Average turnaround</div>
-              <div className="hero-stat-value">4.2 min</div>
-              <div className="hero-stat-desc">Audio → transcript → summary</div>
-            </div>
-            <div className="hero-stat-card">
-              <div className="hero-stat-label">Transcript accuracy</div>
-              <div className="hero-stat-value">95%</div>
-              <div className="hero-stat-desc">With timestamps and speaker ID</div>
-            </div>
-            <div className="hero-stat-card">
-              <div className="hero-stat-label">Searchable records</div>
-              <div className="hero-stat-value">1,248</div>
-              <div className="hero-stat-desc">Across Teams and uploads</div>
-            </div>
-          </div>
-        </div>
-        <div className="hero-video">
-          <video
-            controls
-            className="demo-video"
-            poster="/video-poster.jpg"
-          >
-            <source src="/ibm-recap-demo.mp4" type="video/mp4" />
-            Your browser does not support the video tag.
-          </video>
-        </div>
-      </div>
-
-      <div className="home-header">
+      <div className="home-header" ref={homeDashboardRef}>
         <h1 className="home-title">Recap Center</h1>
         <p className="home-subtitle">A high-level control center that surfaces the next action, recent files, and workflow readiness.</p>
         <div className="status-badge">● Ready for processing</div>
