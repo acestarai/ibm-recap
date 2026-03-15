@@ -253,6 +253,38 @@ function HomeTab({ searchQuery, setSearchQuery, filteredFiles, setActiveTab }) {
             Transform your Microsoft Teams meetings into actionable insights. IBM Recap automatically transcribes,
             summarizes, and organizes your conversations—giving you more time to focus on what matters.
           </p>
+          
+          {/* Hero Action Buttons */}
+          <div className="hero-actions">
+            <button className="hero-btn hero-btn-primary" onClick={() => setActiveTab('home')}>
+              View home screen
+            </button>
+            <button className="hero-btn hero-btn-secondary" onClick={() => setActiveTab('upload')}>
+              Jump to upload flow
+            </button>
+            <button className="hero-btn hero-btn-tertiary" onClick={() => setActiveTab('analytics')}>
+              Preview analytics
+            </button>
+          </div>
+          
+          {/* Hero Stats */}
+          <div className="hero-stats">
+            <div className="hero-stat-card">
+              <div className="hero-stat-label">Average turnaround</div>
+              <div className="hero-stat-value">4.2 min</div>
+              <div className="hero-stat-desc">Audio → transcript → summary</div>
+            </div>
+            <div className="hero-stat-card">
+              <div className="hero-stat-label">Transcript accuracy</div>
+              <div className="hero-stat-value">95%</div>
+              <div className="hero-stat-desc">With timestamps and speaker ID</div>
+            </div>
+            <div className="hero-stat-card">
+              <div className="hero-stat-label">Searchable records</div>
+              <div className="hero-stat-value">1,248</div>
+              <div className="hero-stat-desc">Across Teams and uploads</div>
+            </div>
+          </div>
         </div>
         <div className="hero-video">
           <video
