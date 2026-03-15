@@ -146,11 +146,19 @@ function App() {
 
   // Ref for scrolling to home dashboard
   const homeDashboardRef = React.useRef(null);
+  const tabNavigationRef = React.useRef(null);
   
   const scrollToHomeDashboard = () => {
     setActiveTab('home');
     setTimeout(() => {
       homeDashboardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  };
+  
+  const scrollToTab = (tabName) => {
+    setActiveTab(tabName);
+    setTimeout(() => {
+      tabNavigationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 100);
   };
 
@@ -195,10 +203,10 @@ function App() {
               <button className="hero-btn hero-btn-primary" onClick={scrollToHomeDashboard}>
                 View Home Dashboard
               </button>
-              <button className="hero-btn hero-btn-secondary" onClick={() => setActiveTab('upload')}>
+              <button className="hero-btn hero-btn-secondary" onClick={() => scrollToTab('upload')}>
                 Jump to upload flow
               </button>
-              <button className="hero-btn hero-btn-tertiary" onClick={() => setActiveTab('analytics')}>
+              <button className="hero-btn hero-btn-tertiary" onClick={() => scrollToTab('analytics')}>
                 Preview analytics
               </button>
             </div>
@@ -236,7 +244,7 @@ function App() {
       </section>
 
       {/* Tab Navigation */}
-      <nav className="tab-navigation">
+      <nav className="tab-navigation" ref={tabNavigationRef}>
         {tabs.map(tab => (
           <button
             key={tab.id}
