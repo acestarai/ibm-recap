@@ -490,32 +490,30 @@ function UploadTab({ files, busy, setBusy, refresh }) {
       <h1 className="tab-title">Upload audio file</h1>
       <p className="tab-subtitle">Upload meeting recordings in MP3, M4A, or WAV format</p>
 
-      {!files.audio ? (
-        <div
-          className={`upload-drop-zone ${isDragging ? 'dragging' : ''}`}
-          onDragEnter={handleDragEnter}
-          onDragLeave={handleDragLeave}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-        >
-          <div className="upload-icon">📁</div>
-          <h3>Drag and drop your audio file here</h3>
-          <p>or</p>
-          <label className="upload-button">
-            <input
-              type="file"
-              accept=".mp3,.m4a,.wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/wave"
-              onChange={handleFileUpload}
-              style={{ display: 'none' }}
-              disabled={busy}
-            />
-            <span className="btn-primary">Browse files</span>
-          </label>
-          <p className="upload-hint">Supported formats: MP3, M4A, WAV (max 100MB)</p>
-        </div>
-      ) : (
-        <AudioPlayer audioFile={files.audio} />
-      )}
+      <div
+        className={`upload-drop-zone ${isDragging ? 'dragging' : ''}`}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
+        <div className="upload-icon">📁</div>
+        <h3>Drag and drop your audio file here</h3>
+        <p>or</p>
+        <label className="upload-button">
+          <input
+            type="file"
+            accept=".mp3,.m4a,.wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/wave"
+            onChange={handleFileUpload}
+            style={{ display: 'none' }}
+            disabled={busy}
+          />
+          <span className="btn-primary">Browse files</span>
+        </label>
+        <p className="upload-hint">Supported formats: MP3, M4A, WAV (max 100MB)</p>
+      </div>
+
+      {files.audio && <AudioPlayer audioFile={files.audio} />}
     </div>
   );
 }
@@ -552,14 +550,22 @@ function AudioPlayer({ audioFile }) {
     };
   }, []);
 
-  const togglePlay = () => {
+  const togglePlay = async () => {
     const audio = audioRef.current;
-    if (isPlaying) {
-      audio.pause();
-    } else {
-      audio.play();
+    if (!audio) return;
+    
+    try {
+      if (isPlaying) {
+        audio.pause();
+        setIsPlaying(false);
+      } else {
+        await audio.play();
+        setIsPlaying(true);
+      }
+    } catch (error) {
+      console.error('Error playing audio:', error);
+      setIsPlaying(false);
     }
-    setIsPlaying(!isPlaying);
   };
 
   const handleSeek = (e) => {
