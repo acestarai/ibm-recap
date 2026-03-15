@@ -89,20 +89,34 @@ body:not(.dark-mode) .app-header {
 
 .logo-text {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: white;
+  position: relative;
+  padding-bottom: 0.25rem;
 }
 
-.logo-subtitle {
-  font-size: 10px;
-  letter-spacing: 1px;
-  opacity: 0.9;
-  font-weight: 400;
+.logo-ibm {
+  font-weight: 700;
+  letter-spacing: 0.05em;
 }
 
-.logo-title {
-  font-size: 20px;
+.logo-recap {
   font-weight: 600;
-  letter-spacing: -0.5px;
+  position: relative;
+}
+
+.logo-recap::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 2px;
 }
 
 .header-right {

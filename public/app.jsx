@@ -150,17 +150,14 @@ function App() {
       <header className="app-header">
         <div className="header-left">
           <div className="logo-container">
-            <div className="logo-icon">IR</div>
             <div className="logo-text">
-              <div className="logo-subtitle">INTERNAL AI PRODUCTIVITY APP</div>
-              <div className="logo-title">IBM Recap</div>
+              <span className="logo-ibm">IBM</span>
+              <span className="logo-recap">Recap</span>
             </div>
           </div>
         </div>
         
         <div className="header-right">
-          <button className="header-link">Prototype</button>
-          <button className="header-link">Roadmap</button>
           <button className="theme-toggle-btn" onClick={toggleDarkMode}>
             {darkMode ? '☀️' : '🌙'} {darkMode ? 'Dark' : 'Light'} mode
           </button>
@@ -249,7 +246,7 @@ function HomeTab({ searchQuery, setSearchQuery, filteredFiles, setActiveTab }) {
   return (
     <div className="home-tab">
       <div className="home-header">
-        <h1 className="home-title">Home dashboard</h1>
+        <h1 className="home-title">Recap Center</h1>
         <p className="home-subtitle">A high-level control center that surfaces the next action, recent files, and workflow readiness.</p>
         <div className="status-badge">● Ready for processing</div>
       </div>
