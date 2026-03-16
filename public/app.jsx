@@ -231,14 +231,14 @@ function App() {
             </div>
           </div>
           <div className="hero-video">
-            <video
-              controls
+            <iframe
+              src="https://ibm.box.com/embed/preview/ibm-recap-vid?showDownload=false"
               className="demo-video"
-              preload="metadata"
-            >
-              <source src="https://ibm.box.com/shared/static/ibm-recap-vid.mp4" type="video/mp4" />
-              Your browser does not support the video tag.
-            </video>
+              frameBorder="0"
+              allowFullScreen
+              webkitallowfullscreen
+              msallowfullscreen
+            ></iframe>
           </div>
         </div>
       </section>
