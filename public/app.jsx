@@ -232,9 +232,10 @@ function App() {
           </div>
           <div className="hero-video">
             <iframe
-              src="https://ibm.box.com/embed/preview/ibm-recap-vid?showDownload=false"
+              src="https://ibm.ent.box.com/embed/s/ed5ha1bvn3jfbcxfjz3d19gg26nksvri?sortColumn=date"
               className="demo-video"
               frameBorder="0"
+              allow="local-network-access *; clipboard-read *; clipboard-write *"
               allowFullScreen
               webkitallowfullscreen
               msallowfullscreen
