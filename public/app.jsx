@@ -116,6 +116,7 @@ function App() {
     
     const normalizedFiles = {
       audio: j.files?.audio || null,
+      originalFilename: j.files?.originalFilename || null,
       transcript: j.files?.transcript || null,
       summary: j.files?.summary || null
     };
@@ -304,15 +305,9 @@ function App() {
           setActiveTab={setActiveTab}
         />}
         
-        {activeTab === 'record' && <ComingSoonTab 
-          title="Record"
-          description="Teams calendar integration and direct meeting recording coming soon"
-        />}
+        {activeTab === 'record' && <RecordTab />}
         
-        {activeTab === 'analytics' && <ComingSoonTab 
-          title="Analytics"
-          description="Meeting insights, time tracking, and action item analytics coming soon"
-        />}
+        {activeTab === 'analytics' && <AnalyticsTab />}
       </main>
     </div>
   );
@@ -848,6 +843,158 @@ function RecentUploadsPanel() {
   );
 }
 
+// Recent Transcripts Panel Component
+function RecentTranscriptsPanel() {
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [recentTranscripts, setRecentTranscripts] = React.useState([
+    {
+      id: 1,
+      filename: 'Q1_Planning_Sync_0314.m4a',
+      duration: '54 min',
+      transcriptType: 'Standard with timestamps',
+      date: '2024-03-14',
+      speakerDiarization: true
+    },
+    {
+      id: 2,
+      filename: 'Client_Retention_Review.wav',
+      duration: '42 min',
+      transcriptType: 'Custom with speaker IDs',
+      date: '2024-03-13',
+      speakerDiarization: true
+    },
+    {
+      id: 3,
+      filename: 'Weekly_Operations_Checkin.mp3',
+      duration: '28 min',
+      transcriptType: 'Standard',
+      date: '2024-03-12',
+      speakerDiarization: false
+    }
+  ]);
+
+  const filteredTranscripts = recentTranscripts.filter(transcript => {
+    const query = searchQuery.toLowerCase();
+    return (
+      transcript.filename.toLowerCase().includes(query) ||
+      transcript.transcriptType.toLowerCase().includes(query) ||
+      transcript.date.includes(query)
+    );
+  });
+
+  return (
+    <div className="recent-uploads-panel">
+      <div className="recent-uploads-header">
+        <div className="search-container">
+          <span className="search-icon">🔍</span>
+          <input
+            type="text"
+            className="search-input"
+            placeholder="Search recent transcripts"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+        <div className="recent-uploads-badge">Recent transcripts</div>
+      </div>
+
+      <div className="recent-uploads-list">
+        {filteredTranscripts.map(transcript => (
+          <div key={transcript.id} className="recent-upload-card">
+            <div className="recent-upload-icon">📝</div>
+            <div className="recent-upload-info">
+              <div className="recent-upload-filename">{transcript.filename}</div>
+              <div className="recent-upload-meta">
+                {transcript.duration} • {transcript.transcriptType}
+                {transcript.speakerDiarization && ' • Speaker diarization'}
+              </div>
+            </div>
+            <div className="recent-upload-status">
+              <span className="status-badge status-success">Transcript ✓</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Recent Summaries Panel Component
+function RecentSummariesPanel() {
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [recentSummaries, setRecentSummaries] = React.useState([
+    {
+      id: 1,
+      filename: 'Q1_Planning_Sync_0314.m4a',
+      summaryType: 'Structured',
+      sections: 'Attendees, Action items, Risks',
+      date: '2024-03-14',
+      actionItems: 8
+    },
+    {
+      id: 2,
+      filename: 'Client_Retention_Review.wav',
+      summaryType: 'Standard',
+      sections: 'Key points only',
+      date: '2024-03-13',
+      actionItems: 5
+    },
+    {
+      id: 3,
+      filename: 'Weekly_Operations_Checkin.mp3',
+      summaryType: 'Structured',
+      sections: 'All sections',
+      date: '2024-03-12',
+      actionItems: 12
+    }
+  ]);
+
+  const filteredSummaries = recentSummaries.filter(summary => {
+    const query = searchQuery.toLowerCase();
+    return (
+      summary.filename.toLowerCase().includes(query) ||
+      summary.summaryType.toLowerCase().includes(query) ||
+      summary.sections.toLowerCase().includes(query) ||
+      summary.date.includes(query)
+    );
+  });
+
+  return (
+    <div className="recent-uploads-panel">
+      <div className="recent-uploads-header">
+        <div className="search-container">
+          <span className="search-icon">🔍</span>
+          <input
+            type="text"
+            className="search-input"
+            placeholder="Search recent summaries"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+        <div className="recent-uploads-badge">Recent summaries</div>
+      </div>
+
+      <div className="recent-uploads-list">
+        {filteredSummaries.map(summary => (
+          <div key={summary.id} className="recent-upload-card">
+            <div className="recent-upload-icon">📊</div>
+            <div className="recent-upload-info">
+              <div className="recent-upload-filename">{summary.filename}</div>
+              <div className="recent-upload-meta">
+                {summary.summaryType} • {summary.sections} • {summary.actionItems} action items
+              </div>
+            </div>
+            <div className="recent-upload-status">
+              <span className="status-badge status-success">Summary ✓</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Transcribe Tab Component
 function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcriptType, setTranscriptType, transcriptOptions, setTranscriptOptions, setBusy, refresh, setActiveTab }) {
   const [showOptions, setShowOptions] = useState(false);
@@ -922,18 +1069,18 @@ function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcrip
         )}
       </div>
 
-      {!files.audio && (
-        <div className="empty-state">
-          <div className="empty-icon">📁</div>
-          <h3>No audio file uploaded</h3>
-          <p>Please upload an audio file first to generate a transcript</p>
-        </div>
-      )}
-
-      {files.audio && (
-        <>
-          {/* File Context Card */}
-          <div className="transcribe-file-card">
+      <div className="transcribe-tab-content">
+        <div className="transcribe-left-column">
+          {!files.audio ? (
+            <div className="empty-state">
+              <div className="empty-icon">📁</div>
+              <h3>No audio file uploaded</h3>
+              <p>Please upload an audio file first to generate a transcript</p>
+            </div>
+          ) : (
+            <>
+              {/* File Context Card */}
+            <div className="transcribe-file-card">
             <div className="file-card-icon">🎧</div>
             <div className="file-card-info">
               <div className="file-card-name">{files.originalFilename || files.audio.split('/').pop()}</div>
@@ -1106,8 +1253,14 @@ function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcrip
               </button>
             )}
           </div>
-        </>
-      )}
+            </>
+          )}
+        </div>
+        
+        <div className="transcribe-right-column">
+          <RecentTranscriptsPanel />
+        </div>
+      </div>
     </div>
   );
 }
@@ -1175,18 +1328,18 @@ function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType,
         )}
       </div>
 
-      {!files.transcript && (
-        <div className="empty-state">
-          <div className="empty-icon">📝</div>
-          <h3>No transcript available</h3>
-          <p>Please transcribe an audio file first to generate a summary</p>
-        </div>
-      )}
-
-      {files.transcript && (
-        <>
-          {/* File Context Card */}
-          <div className="transcribe-file-card">
+      <div className="summarize-tab-content">
+        <div className="summarize-left-column">
+          {!files.transcript ? (
+            <div className="empty-state">
+              <div className="empty-icon">📝</div>
+              <h3>No transcript available</h3>
+              <p>Please transcribe an audio file first to generate a summary</p>
+            </div>
+          ) : (
+            <>
+              {/* File Context Card */}
+              <div className="transcribe-file-card">
             <div className="file-card-icon">📝</div>
             <div className="file-card-info">
               <div className="file-card-name">{files.transcript.split('/').pop()}</div>
@@ -1337,7 +1490,7 @@ function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType,
                 </button>
                 <button
                   className="btn-secondary-large"
-                  onClick={() => setActiveTab('analytics')}
+                  disabled
                 >
                   Continue to Analytics
                 </button>
@@ -1352,20 +1505,36 @@ function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType,
               </button>
             )}
           </div>
-        </>
-      )}
+            </>
+          )}
+        </div>
+        
+        <div className="summarize-right-column">
+          <RecentSummariesPanel />
+        </div>
+      </div>
     </div>
   );
 }
 
-// Coming Soon Tab Component
-function ComingSoonTab({ title, description }) {
+// Record Tab Component
+function RecordTab() {
   return (
     <div className="coming-soon-tab">
-      <div className="coming-soon-icon">🚀</div>
-      <h1 className="coming-soon-title">{title}</h1>
-      <p className="coming-soon-description">{description}</p>
-      <div className="coming-soon-badge">Coming Soon</div>
+      <div className="coming-soon-content">
+        <span className="coming-soon-badge">Coming soon</span>
+      </div>
+    </div>
+  );
+}
+
+// Analytics Tab Component
+function AnalyticsTab() {
+  return (
+    <div className="coming-soon-tab">
+      <div className="coming-soon-content">
+        <span className="coming-soon-badge">Coming soon</span>
+      </div>
     </div>
   );
 }

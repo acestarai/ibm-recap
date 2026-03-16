@@ -396,12 +396,14 @@ app.get('/api/status', (_req, res) => {
   if (!audioExists || !transcriptExists || !summaryExists) {
     const cleanedMeta = {
       audioPath: audioExists ? meta.audioPath : null,
+      originalFilename: audioExists ? meta.originalFilename : null,
       transcriptPath: transcriptExists ? meta.transcriptPath : null,
       summaryPath: summaryExists ? meta.summaryPath : null
     };
     
     // Only update metadata if something changed
     if (cleanedMeta.audioPath !== meta.audioPath ||
+        cleanedMeta.originalFilename !== meta.originalFilename ||
         cleanedMeta.transcriptPath !== meta.transcriptPath ||
         cleanedMeta.summaryPath !== meta.summaryPath) {
       writeMeta(cleanedMeta);
@@ -413,6 +415,7 @@ app.get('/api/status', (_req, res) => {
     recording: recordingState,
     files: {
       audio: audioExists ? meta.audioPath : null,
+      originalFilename: audioExists ? meta.originalFilename : null,
       transcript: transcriptExists ? meta.transcriptPath : null,
       summary: summaryExists ? meta.summaryPath : null,
     },
