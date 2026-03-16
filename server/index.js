@@ -473,20 +473,27 @@ app.post('/api/upload-audio', upload.single('audio'), (req, res) => {
     }
 
     const ts = stamp();
+    const originalFilename = req.file.originalname;
     // Preserve original file extension
-    const originalExtension = path.extname(req.file.originalname).toLowerCase();
+    const originalExtension = path.extname(originalFilename).toLowerCase();
     const finalPath = path.join(OUTPUT_DIR, `teams-call-${ts}${originalExtension}`);
     
     // Rename uploaded file to proper name with original extension
     fs.renameSync(req.file.path, finalPath);
     
-    // Update metadata with the uploaded file as the most recent audio
-    writeMeta({ audioPath: finalPath, transcriptPath: null, summaryPath: null });
+    // Update metadata with the uploaded file and original filename
+    writeMeta({
+      audioPath: finalPath,
+      originalFilename: originalFilename,
+      transcriptPath: null,
+      summaryPath: null
+    });
     
     return res.json({
       ok: true,
       message: 'File uploaded successfully',
-      audioPath: finalPath
+      audioPath: finalPath,
+      originalFilename: originalFilename
     });
   } catch (err) {
     return res.status(500).json({ ok: false, error: String(err.message || err) });
@@ -1008,6 +1015,11 @@ Rules:
 
         updateJob(job.id, { percent: 85, message: 'Writing summary file...' });
         fs.writeFileSync(summaryPath, `${summary}\n`, 'utf8');
+        
+        // Count action items and open questions from the summary
+        const actionItemsCount = (summary.match(/## Action items[\s\S]*?(?=##|$)/i)?.[0]?.match(/^[\s]*-/gm) || []).length;
+        const openQuestionsCount = (summary.match(/## Open questions[\s\S]*?(?=##|$)/i)?.[0]?.match(/^[\s]*-/gm) || []).length;
+        
         // Generate PDF version of summary
         const summaryPdfPath = summaryPath.replace(/\.md$/i, '.pdf');
         const summaryPdfDoc = new PDFDocument();
@@ -1098,7 +1110,11 @@ Rules:
           status: 'done',
           percent: 100,
           message: 'Summary complete.',
-          result: { summaryPath },
+          result: {
+            summaryPath,
+            actionItemsCount,
+            openQuestionsCount
+          },
         });
       } catch (err) {
         updateJob(job.id, {

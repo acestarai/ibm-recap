@@ -16,8 +16,8 @@ function App() {
   
   // User state (placeholder for w3 auth)
   const [user, setUser] = useState({
-    name: 'Jordan Lee',
-    email: 'jordan.lee@ibm.com',
+    name: 'Asad Mahmood',
+    email: 'asad.mahmood1@ibm.com',
     avatar: null
   });
   
@@ -78,7 +78,7 @@ function App() {
     timestamps: true,
     speakerDiarization: false,
     pauses: false,
-    redactWords: ''
+    redactWords: null
   });
   
   // Summarization options
@@ -234,7 +234,7 @@ function App() {
             <video
               controls
               className="demo-video"
-              poster="/video-poster.jpg"
+              preload="metadata"
             >
               <source src="/ibm-recap-demo.mp4" type="video/mp4" />
               Your browser does not support the video tag.
@@ -275,7 +275,7 @@ function App() {
           refresh={refresh}
         />}
         
-        {activeTab === 'transcribe' && <TranscribeTab 
+        {activeTab === 'transcribe' && <TranscribeTab
           files={files}
           busy={busy}
           transcribeJob={transcribeJob}
@@ -286,9 +286,10 @@ function App() {
           setTranscriptOptions={setTranscriptOptions}
           setBusy={setBusy}
           refresh={refresh}
+          setActiveTab={setActiveTab}
         />}
         
-        {activeTab === 'summarize' && <SummarizeTab 
+        {activeTab === 'summarize' && <SummarizeTab
           files={files}
           busy={busy}
           summarizeJob={summarizeJob}
@@ -299,6 +300,7 @@ function App() {
           setStructuredSections={setStructuredSections}
           setBusy={setBusy}
           refresh={refresh}
+          setActiveTab={setActiveTab}
         />}
         
         {activeTab === 'record' && <ComingSoonTab 
@@ -513,13 +515,13 @@ function UploadTab({ files, busy, setBusy, refresh }) {
         <p className="upload-hint">Supported formats: MP3, M4A, WAV (max 100MB)</p>
       </div>
 
-      {files.audio && <AudioPlayer audioFile={files.audio} />}
+      {files.audio && <AudioPlayer audioFile={files.audio} originalFilename={files.originalFilename} />}
     </div>
   );
 }
 
 // Audio Player Component
-function AudioPlayer({ audioFile }) {
+function AudioPlayer({ audioFile, originalFilename }) {
   const audioRef = React.useRef(null);
   const [isPlaying, setIsPlaying] = React.useState(false);
   const [currentTime, setCurrentTime] = React.useState(0);
@@ -529,28 +531,46 @@ function AudioPlayer({ audioFile }) {
   const [showMoreOptions, setShowMoreOptions] = React.useState(false);
   const [playbackRate, setPlaybackRate] = React.useState(1);
 
-  // Extract filename from path and construct audio URL
-  const filename = audioFile.split('/').pop();
-  const audioUrl = `/api/audio/${filename}`;
+  // Extract server filename from path and construct audio URL
+  const serverFilename = audioFile.split('/').pop();
+  const audioUrl = `/api/audio/${serverFilename}`;
+  // Use original filename for display, fallback to server filename
+  const displayFilename = originalFilename || serverFilename;
   
   React.useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
     const updateTime = () => setCurrentTime(audio.currentTime);
-    const updateDuration = () => setDuration(audio.duration);
+    const updateDuration = () => {
+      console.log('Audio duration loaded:', audio.duration);
+      setDuration(audio.duration);
+    };
     const handleEnded = () => setIsPlaying(false);
+    const handleError = (e) => {
+      console.error('Audio loading error:', e);
+      console.error('Audio src:', audio.src);
+      console.error('Audio error code:', audio.error?.code);
+      console.error('Audio error message:', audio.error?.message);
+    };
 
     audio.addEventListener('timeupdate', updateTime);
     audio.addEventListener('loadedmetadata', updateDuration);
     audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('error', handleError);
+
+    // Log the audio URL for debugging
+    console.log('Audio player initialized with URL:', audioUrl);
+    console.log('Display filename:', displayFilename);
+    console.log('Server filename:', serverFilename);
 
     return () => {
       audio.removeEventListener('timeupdate', updateTime);
       audio.removeEventListener('loadedmetadata', updateDuration);
       audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('error', handleError);
     };
-  }, []);
+  }, [audioUrl, displayFilename, serverFilename]);
 
   const togglePlay = async () => {
     const audio = audioRef.current;
@@ -592,7 +612,7 @@ function AudioPlayer({ audioFile }) {
   const handleDownload = () => {
     const link = document.createElement('a');
     link.href = audioUrl;
-    link.download = filename;
+    link.download = displayFilename;
     link.click();
     setShowMoreOptions(false);
   };
@@ -681,14 +701,14 @@ function AudioPlayer({ audioFile }) {
       </div>
 
       <div className="audio-player-info">
-        Previewing: <strong>{filename}</strong> • {formatTime(duration)} • Uploaded successfully
+        Previewing: <strong>{displayFilename}</strong> • {formatTime(duration)} • Uploaded successfully
       </div>
     </div>
   );
 }
 
 // Transcribe Tab Component
-function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcriptType, setTranscriptType, transcriptOptions, setTranscriptOptions, setBusy, refresh }) {
+function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcriptType, setTranscriptType, transcriptOptions, setTranscriptOptions, setBusy, refresh, setActiveTab }) {
   const [showOptions, setShowOptions] = useState(false);
 
   const handleTranscribe = () => {
@@ -703,7 +723,7 @@ function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcrip
       options.timestamps = transcriptOptions.timestamps;
       options.speakerDiarization = transcriptOptions.speakerDiarization;
       options.pauses = transcriptOptions.pauses;
-      if (transcriptOptions.redactWords.trim()) {
+      if (transcriptOptions.redactWords && transcriptOptions.redactWords.trim()) {
         options.redactWords = transcriptOptions.redactWords.split(',').map(w => w.trim()).filter(w => w);
       }
     } else {
@@ -743,21 +763,23 @@ function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcrip
     await refresh();
   };
 
+  const getAudioDuration = () => {
+    if (!files.audio) return '';
+    // Mock duration for now - in real app would get from metadata
+    return '54 min';
+  };
+
   return (
     <div className="transcribe-tab">
-      <h1 className="tab-title">Transcribe transcript</h1>
-      <p className="tab-subtitle">A summary generation view with standard and structured modes plus selectable summary sections.</p>
-
-      {files.audio && (
-        <div className="file-ready-card">
-          <div className="file-icon">🎧</div>
-          <div className="file-info">
-            <div className="file-name">{files.audio.split('/').pop()}</div>
-            <div className="file-status-text">Audio file ready • Click transcribe to generate transcript</div>
-          </div>
-          {files.transcript && <span className="badge badge-success">Transcript ✓</span>}
+      <div className="transcribe-header">
+        <div>
+          <h1 className="tab-title">Transcribe audio</h1>
+          <p className="tab-subtitle">A dedicated transcript generation tab with visible file context, customizable options, and progress feedback.</p>
         </div>
-      )}
+        {files.transcript && (
+          <span className="transcript-ready-badge">Transcript ready state</span>
+        )}
+      </div>
 
       {!files.audio && (
         <div className="empty-state">
@@ -767,165 +789,192 @@ function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcrip
         </div>
       )}
 
-      {files.audio && !transcribeJob && (
-        <button 
-          className="btn-primary btn-large"
-          onClick={handleTranscribe}
-          disabled={busy || !files.audio}
-        >
-          📝 Transcribe Audio
-        </button>
-      )}
-
-      {transcribeJob && (
-        <div className="progress-card">
-          <div className="progress-header">
-            <span className="progress-label">Transcription</span>
-            <span className="progress-percent">{transcribeJob.percent || 0}%</span>
-          </div>
-          <div className="progress-message">
-            {transcribeJob.status === 'done' && transcribeJob.percent === 100
-              ? "Transcription complete. Please click 'Transcript PDF' to download and view the meeting transcript."
-              : transcribeJob.message}
-          </div>
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${transcribeJob.percent || 0}%` }} />
-          </div>
-        </div>
-      )}
-
-      {files.transcript && (
-        <div className="download-section">
-          <button 
-            className="btn-secondary"
-            onClick={() => window.open('/api/download/transcript', '_blank')}
-          >
-            📄 Download Transcript PDF
-          </button>
-        </div>
-      )}
-
-      {/* Transcription Options Modal */}
-      {showOptions && (
-        <div className="modal-overlay" onClick={() => setShowOptions(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Transcription Options</h2>
-              <button className="modal-close" onClick={() => setShowOptions(false)}>×</button>
-            </div>
-            
-            <div className="modal-body">
-              <p className="modal-description">Choose how you want your meeting to be transcribed:</p>
-              
-              <div className="option-cards">
-                <label className="option-card">
-                  <input
-                    type="radio"
-                    name="transcriptType"
-                    value="standard"
-                    checked={transcriptType === 'standard'}
-                    onChange={(e) => setTranscriptType(e.target.value)}
-                  />
-                  <div className="option-content">
-                    <div className="option-title">📝 Standard Transcript</div>
-                    <div className="option-description">
-                      A standard out-of-the-box text transcript of the meeting, line by line, with timestamps.
-                    </div>
-                  </div>
-                </label>
-
-                <label className="option-card">
-                  <input
-                    type="radio"
-                    name="transcriptType"
-                    value="custom"
-                    checked={transcriptType === 'custom'}
-                    onChange={(e) => setTranscriptType(e.target.value)}
-                  />
-                  <div className="option-content">
-                    <div className="option-title">⚙️ Custom Transcript</div>
-                    <div className="option-description">
-                      Customize your transcript with specific options you select below.
-                    </div>
-                  </div>
-                </label>
+      {files.audio && (
+        <>
+          {/* File Context Card */}
+          <div className="transcribe-file-card">
+            <div className="file-card-icon">🎧</div>
+            <div className="file-card-info">
+              <div className="file-card-name">{files.originalFilename || files.audio.split('/').pop()}</div>
+              <div className="file-card-meta">
+                Uploaded today • {getAudioDuration()} • Audio file validated
               </div>
-
-              {transcriptType === 'custom' && (
-                <div className="custom-options">
-                  <h3>Select Options to Include:</h3>
-                  <div className="checkbox-group">
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={transcriptOptions.timestamps}
-                        onChange={(e) => setTranscriptOptions({...transcriptOptions, timestamps: e.target.checked})}
-                      />
-                      <span>⏱️ Timestamps</span>
-                    </label>
-                    
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={transcriptOptions.speakerDiarization}
-                        onChange={(e) => setTranscriptOptions({...transcriptOptions, speakerDiarization: e.target.checked})}
-                      />
-                      <span>👥 Speaker Diarization</span>
-                    </label>
-                    
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={transcriptOptions.pauses}
-                        onChange={(e) => setTranscriptOptions({...transcriptOptions, pauses: e.target.checked})}
-                      />
-                      <span>⏸️ Pauses</span>
-                    </label>
-                  </div>
-                  
-                  <div className="input-group">
-                    <label htmlFor="redactWords">
-                      <span>🔒 Redact Words/Phrases (comma-separated):</span>
-                    </label>
-                    <input
-                      id="redactWords"
-                      type="text"
-                      className="text-input"
-                      placeholder="e.g., confidential, password, secret"
-                      value={transcriptOptions.redactWords}
-                      onChange={(e) => setTranscriptOptions({...transcriptOptions, redactWords: e.target.value})}
-                    />
-                  </div>
-                </div>
-              )}
             </div>
+            {files.audio && (
+              <span className="file-card-badge">Audio ✓</span>
+            )}
+          </div>
 
-            <div className="modal-footer">
-              <button className="btn-secondary" onClick={() => setShowOptions(false)}>
-                Cancel
-              </button>
-              <button className="btn-primary" onClick={executeTranscription}>
-                Generate Transcript
-              </button>
+          {/* Transcript Type Options */}
+          <div className="transcript-options-grid">
+            <label className={`transcript-option-card ${transcriptType === 'standard' ? 'selected' : ''}`}>
+              <input
+                type="radio"
+                name="transcriptType"
+                value="standard"
+                checked={transcriptType === 'standard'}
+                onChange={(e) => setTranscriptType(e.target.value)}
+              />
+              <div className="option-card-content">
+                <div className="option-card-header">
+                  <span className="option-card-icon">📝</span>
+                  <span className="option-card-title">Standard transcript</span>
+                </div>
+                <p className="option-card-description">
+                  A line-by-line transcript with timestamps.
+                </p>
+              </div>
+            </label>
+
+            <label className={`transcript-option-card ${transcriptType === 'custom' ? 'selected' : ''}`}>
+              <input
+                type="radio"
+                name="transcriptType"
+                value="custom"
+                checked={transcriptType === 'custom'}
+                onChange={(e) => setTranscriptType(e.target.value)}
+              />
+              <div className="option-card-content">
+                <div className="option-card-header">
+                  <span className="option-card-icon">⚙️</span>
+                  <span className="option-card-title">Custom transcript</span>
+                  <span className="info-badge">ⓘ</span>
+                </div>
+                <p className="option-card-description">
+                  Customize timestamps, speaker diarization, pauses, and redactions.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          {/* Custom Options Checkboxes */}
+          <div className="transcript-features">
+            <label className="feature-checkbox">
+              <input
+                type="checkbox"
+                checked={transcriptOptions.timestamps}
+                onChange={(e) => setTranscriptOptions({...transcriptOptions, timestamps: e.target.checked})}
+                disabled={transcriptType === 'standard'}
+              />
+              <div className="feature-content">
+                <div className="feature-title">Timestamps</div>
+                <div className="feature-description">Included for searchability and playback reference.</div>
+              </div>
+            </label>
+
+            <label className="feature-checkbox">
+              <input
+                type="checkbox"
+                checked={transcriptOptions.speakerDiarization}
+                onChange={(e) => setTranscriptOptions({...transcriptOptions, speakerDiarization: e.target.checked})}
+                disabled={transcriptType === 'standard'}
+              />
+              <div className="feature-content">
+                <div className="feature-title">Speaker diarization</div>
+                <div className="feature-description">AI speaker identification enabled.</div>
+              </div>
+            </label>
+
+            <label className="feature-checkbox">
+              <input
+                type="checkbox"
+                checked={transcriptOptions.pauses}
+                onChange={(e) => setTranscriptOptions({...transcriptOptions, pauses: e.target.checked})}
+                disabled={transcriptType === 'standard'}
+              />
+              <div className="feature-content">
+                <div className="feature-title">Pause markers</div>
+                <div className="feature-description">Useful for natural conversation pacing.</div>
+              </div>
+            </label>
+
+            <div className="feature-checkbox feature-with-input">
+              <input
+                type="checkbox"
+                checked={transcriptOptions.redactWords !== null && transcriptOptions.redactWords !== undefined}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    setTranscriptOptions({...transcriptOptions, redactWords: ''});
+                  } else {
+                    setTranscriptOptions({...transcriptOptions, redactWords: null});
+                  }
+                }}
+                disabled={transcriptType === 'standard'}
+              />
+              <div className="feature-content">
+                <div className="feature-title">Redacted terms</div>
+                <div className="feature-description">
+                  Enter words or phrases to redact (comma-separated)
+                </div>
+                {(transcriptOptions.redactWords !== null && transcriptOptions.redactWords !== undefined) && (
+                  <input
+                    type="text"
+                    className="redact-input"
+                    placeholder="e.g., confidential, password, unreleased"
+                    value={transcriptOptions.redactWords || ''}
+                    onChange={(e) => setTranscriptOptions({...transcriptOptions, redactWords: e.target.value})}
+                    disabled={transcriptType === 'standard'}
+                  />
+                )}
+              </div>
             </div>
           </div>
-        </div>
+
+          {/* Progress Section */}
+          {transcribeJob && (
+            <div className="transcription-progress-section">
+              <div className="progress-section-header">
+                <span className="progress-section-title">Transcription progress</span>
+                <span className="progress-section-percent">{transcribeJob.percent || 0}%</span>
+              </div>
+              <div className="progress-section-bar">
+                <div className="progress-section-fill" style={{ width: `${transcribeJob.percent || 0}%` }} />
+              </div>
+              <p className="progress-section-message">
+                {transcribeJob.status === 'done' && transcribeJob.percent === 100
+                  ? 'Transcription complete. Download the PDF or continue to the summary tab.'
+                  : transcribeJob.message || 'Processing your audio file...'}
+              </p>
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          <div className="transcribe-actions">
+            {files.transcript ? (
+              <>
+                <button
+                  className="btn-primary-large"
+                  onClick={() => window.open('/api/download/transcript', '_blank')}
+                >
+                  Download transcript PDF
+                </button>
+                <button
+                  className="btn-secondary-large"
+                  onClick={() => setActiveTab('summarize')}
+                >
+                  Continue to summarize
+                </button>
+              </>
+            ) : (
+              <button
+                className="btn-primary-large"
+                onClick={executeTranscription}
+                disabled={busy || !files.audio}
+              >
+                {busy ? 'Transcribing...' : 'Start transcription'}
+              </button>
+            )}
+          </div>
+        </>
       )}
     </div>
   );
 }
 
 // Summarize Tab Component  
-function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType, setSummaryType, structuredSections, setStructuredSections, setBusy, refresh }) {
-  const [showOptions, setShowOptions] = useState(false);
-
-  const handleSummarize = () => {
-    setShowOptions(true);
-  };
-
+function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType, setSummaryType, structuredSections, setStructuredSections, setBusy, refresh, setActiveTab }) {
+  
   const executeSummarization = async () => {
-    setShowOptions(false);
-    
     let customPrompt = '';
     if (summaryType === 'standard') {
       customPrompt = `Please provide a brief, concise bulleted list of all key points and actions discussed in the meeting. Do not include any section headers or categories. Just provide a simple bulleted list.`;
@@ -975,19 +1024,15 @@ function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType,
 
   return (
     <div className="summarize-tab">
-      <h1 className="tab-title">Summarize transcript</h1>
-      <p className="tab-subtitle">A summary generation view with standard and structured modes plus selectable summary sections.</p>
-
-      {files.transcript && (
-        <div className="file-ready-card">
-          <div className="file-icon">📝</div>
-          <div className="file-info">
-            <div className="file-name">{files.transcript.split('/').pop()}</div>
-            <div className="file-status-text">Transcript available • Generated with timestamps and speaker IDs</div>
-          </div>
-          <span className="badge badge-success">Ready for summary</span>
+      <div className="summarize-header">
+        <div>
+          <h1 className="tab-title">Summarize transcript</h1>
+          <p className="tab-subtitle">A summary generation view with standard and structured modes plus selectable summary sections.</p>
         </div>
-      )}
+        {files.transcript && (
+          <span className="transcript-ready-badge">Transcript ✓</span>
+        )}
+      </div>
 
       {!files.transcript && (
         <div className="empty-state">
@@ -997,153 +1042,176 @@ function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType,
         </div>
       )}
 
-      {files.transcript && !summarizeJob && (
-        <button 
-          className="btn-primary btn-large"
-          onClick={handleSummarize}
-          disabled={busy || !files.transcript}
-        >
-          📊 Summarize Transcript
-        </button>
-      )}
-
-      {summarizeJob && (
-        <div className="progress-card">
-          <div className="progress-header">
-            <span className="progress-label">Summarization</span>
-            <span className="progress-percent">{summarizeJob.percent || 0}%</span>
-          </div>
-          <div className="progress-message">
-            {summarizeJob.status === 'done' && summarizeJob.percent === 100
-              ? "Summarization complete. Please click 'Summary PDF' to download and view the meeting summary."
-              : summarizeJob.message}
-          </div>
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${summarizeJob.percent || 0}%` }} />
-          </div>
-        </div>
-      )}
-
-      {files.summary && (
-        <div className="download-section">
-          <button 
-            className="btn-secondary"
-            onClick={() => window.open('/api/download/summary', '_blank')}
-          >
-            📋 Download Summary PDF
-          </button>
-        </div>
-      )}
-
-      {/* Summarization Options Modal */}
-      {showOptions && (
-        <div className="modal-overlay" onClick={() => setShowOptions(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Summarization Options</h2>
-              <button className="modal-close" onClick={() => setShowOptions(false)}>×</button>
-            </div>
-            
-            <div className="modal-body">
-              <p className="modal-description">Choose how you want your meeting to be summarized:</p>
-              
-              <div className="option-cards">
-                <label className="option-card">
-                  <input
-                    type="radio"
-                    name="summaryType"
-                    value="standard"
-                    checked={summaryType === 'standard'}
-                    onChange={(e) => setSummaryType(e.target.value)}
-                  />
-                  <div className="option-content">
-                    <div className="option-title">📝 Standard Summary</div>
-                    <div className="option-description">
-                      A brief, out of the box bulleted list of all key points and actions discussed in the meeting.
-                    </div>
-                  </div>
-                </label>
-
-                <label className="option-card">
-                  <input
-                    type="radio"
-                    name="summaryType"
-                    value="structured"
-                    checked={summaryType === 'structured'}
-                    onChange={(e) => setSummaryType(e.target.value)}
-                  />
-                  <div className="option-content">
-                    <div className="option-title">📋 Structured Summary</div>
-                    <div className="option-description">
-                      Get a customized summary with specific sections you select below.
-                    </div>
-                  </div>
-                </label>
+      {files.transcript && (
+        <>
+          {/* File Context Card */}
+          <div className="transcribe-file-card">
+            <div className="file-card-icon">📝</div>
+            <div className="file-card-info">
+              <div className="file-card-name">{files.transcript.split('/').pop()}</div>
+              <div className="file-card-meta">
+                Transcript available • Generated with timestamps and speaker IDs
               </div>
-
-              {summaryType === 'structured' && (
-                <div className="custom-options">
-                  <h3>Select Sections to Include:</h3>
-                  <div className="checkbox-group">
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={structuredSections.attendees}
-                        onChange={(e) => setStructuredSections({...structuredSections, attendees: e.target.checked})}
-                      />
-                      <span>👥 Attendees</span>
-                    </label>
-                    
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={structuredSections.purpose}
-                        onChange={(e) => setStructuredSections({...structuredSections, purpose: e.target.checked})}
-                      />
-                      <span>🎯 Main Purpose</span>
-                    </label>
-                    
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={structuredSections.actionItems}
-                        onChange={(e) => setStructuredSections({...structuredSections, actionItems: e.target.checked})}
-                      />
-                      <span>✅ Action Items</span>
-                    </label>
-                    
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={structuredSections.risks}
-                        onChange={(e) => setStructuredSections({...structuredSections, risks: e.target.checked})}
-                      />
-                      <span>⚠️ Risks & Blockers</span>
-                    </label>
-                    
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={structuredSections.questions}
-                        onChange={(e) => setStructuredSections({...structuredSections, questions: e.target.checked})}
-                      />
-                      <span>❓ Open Questions</span>
-                    </label>
-                  </div>
-                </div>
-              )}
             </div>
-
-            <div className="modal-footer">
-              <button className="btn-secondary" onClick={() => setShowOptions(false)}>
-                Cancel
-              </button>
-              <button className="btn-primary" onClick={executeSummarization}>
-                Generate Summary
-              </button>
-            </div>
+            <span className="file-card-badge" style={{background: 'rgba(36, 161, 72, 0.1)', color: 'var(--ibm-green)'}}>Ready for summary</span>
           </div>
-        </div>
+
+          {/* Summary Type Options */}
+          <div className="transcript-options-grid">
+            <label className={`transcript-option-card ${summaryType === 'standard' ? 'selected' : ''}`}>
+              <input
+                type="radio"
+                name="summaryType"
+                value="standard"
+                checked={summaryType === 'standard'}
+                onChange={(e) => setSummaryType(e.target.value)}
+              />
+              <div className="option-card-content">
+                <div className="option-card-header">
+                  <span className="option-card-icon">📋</span>
+                  <span className="option-card-title">Standard summary</span>
+                </div>
+                <p className="option-card-description">
+                  A concise bulleted recap with key points and actions.
+                </p>
+              </div>
+            </label>
+
+            <label className={`transcript-option-card ${summaryType === 'structured' ? 'selected' : ''}`}>
+              <input
+                type="radio"
+                name="summaryType"
+                value="structured"
+                checked={summaryType === 'structured'}
+                onChange={(e) => setSummaryType(e.target.value)}
+              />
+              <div className="option-card-content">
+                <div className="option-card-header">
+                  <span className="option-card-icon">📊</span>
+                  <span className="option-card-title">Structured summary</span>
+                  <span className="info-badge">ⓘ</span>
+                </div>
+                <p className="option-card-description">
+                  Build a custom format based on sections selected below.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          {/* Structured Sections Checkboxes */}
+          <div className="transcript-features">
+            <label className="feature-checkbox">
+              <input
+                type="checkbox"
+                checked={structuredSections.attendees}
+                onChange={(e) => setStructuredSections({...structuredSections, attendees: e.target.checked})}
+                disabled={summaryType === 'standard'}
+              />
+              <div className="feature-content">
+                <div className="feature-title">Attendees</div>
+                <div className="feature-description">Who was present and how often they contributed.</div>
+              </div>
+            </label>
+
+            <label className="feature-checkbox">
+              <input
+                type="checkbox"
+                checked={structuredSections.purpose}
+                onChange={(e) => setStructuredSections({...structuredSections, purpose: e.target.checked})}
+                disabled={summaryType === 'standard'}
+              />
+              <div className="feature-content">
+                <div className="feature-title">Main purpose</div>
+                <div className="feature-description">The core objective of the meeting.</div>
+              </div>
+            </label>
+
+            <label className="feature-checkbox">
+              <input
+                type="checkbox"
+                checked={structuredSections.actionItems}
+                onChange={(e) => setStructuredSections({...structuredSections, actionItems: e.target.checked})}
+                disabled={summaryType === 'standard'}
+              />
+              <div className="feature-content">
+                <div className="feature-title">Action items</div>
+                <div className="feature-description">Tasks, owners, and due dates.</div>
+              </div>
+            </label>
+
+            <label className="feature-checkbox">
+              <input
+                type="checkbox"
+                checked={structuredSections.risks}
+                onChange={(e) => setStructuredSections({...structuredSections, risks: e.target.checked})}
+                disabled={summaryType === 'standard'}
+              />
+              <div className="feature-content">
+                <div className="feature-title">Risks & blockers</div>
+                <div className="feature-description">Known concerns that need follow-up.</div>
+              </div>
+            </label>
+
+            <label className="feature-checkbox">
+              <input
+                type="checkbox"
+                checked={structuredSections.questions}
+                onChange={(e) => setStructuredSections({...structuredSections, questions: e.target.checked})}
+                disabled={summaryType === 'standard'}
+              />
+              <div className="feature-content">
+                <div className="feature-title">Open questions</div>
+                <div className="feature-description">Unresolved points requiring clarification.</div>
+              </div>
+            </label>
+          </div>
+
+          {/* Progress Section */}
+          {summarizeJob && (
+            <div className="transcription-progress-section">
+              <div className="progress-section-header">
+                <span className="progress-section-title">Summary progress</span>
+                <span className="progress-section-percent">{summarizeJob.percent || 0}%</span>
+              </div>
+              <div className="progress-section-bar">
+                <div className="progress-section-fill" style={{ width: `${summarizeJob.percent || 0}%` }} />
+              </div>
+              <p className="progress-section-message">
+                {summarizeJob.status === 'done' && summarizeJob.percent === 100
+                  ? `Summary generated successfully with ${summarizeJob.result?.actionItemsCount || 0} action items and ${summarizeJob.result?.openQuestionsCount || 0} open questions.`
+                  : summarizeJob.message || 'Generating your summary...'}
+              </p>
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          <div className="transcribe-actions">
+            {files.summary ? (
+              <>
+                <button
+                  className="btn-primary-large"
+                  onClick={() => window.open('/api/download/summary', '_blank')}
+                >
+                  Download summary PDF
+                </button>
+                <button
+                  className="btn-secondary-large"
+                  onClick={() => setActiveTab('analytics')}
+                >
+                  Continue to Analytics
+                </button>
+              </>
+            ) : (
+              <button
+                className="btn-primary-large"
+                onClick={executeSummarization}
+                disabled={busy || !files.transcript}
+              >
+                {busy ? 'Generating summary...' : 'Start summarization'}
+              </button>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

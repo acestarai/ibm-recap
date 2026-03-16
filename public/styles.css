@@ -1714,3 +1714,447 @@ body:not(.dark-mode) ::-webkit-scrollbar-track {
 }
 
 /* Made with Bob */
+
+
+/* ===================================
+   Transcribe Tab Redesign Styles
+   =================================== */
+
+/* Transcribe Header with Badge */
+.transcribe-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+.transcript-ready-badge {
+  background: rgba(36, 161, 72, 0.1);
+  color: var(--ibm-green);
+  padding: 6px 16px;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+body:not(.dark-mode) .transcript-ready-badge {
+  background: rgba(36, 161, 72, 0.15);
+}
+
+/* File Context Card */
+.transcribe-file-card {
+  background: var(--ibm-gray-10);
+  border: 1px solid var(--ibm-gray-20);
+  border-radius: 8px;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+body.dark-mode .transcribe-file-card {
+  background: var(--ibm-gray-90);
+  border-color: var(--ibm-gray-80);
+}
+
+.file-card-icon {
+  font-size: 32px;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 98, 254, 0.1);
+  border-radius: 8px;
+}
+
+.file-card-info {
+  flex: 1;
+}
+
+.file-card-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ibm-gray-100);
+  margin-bottom: 4px;
+}
+
+body.dark-mode .file-card-name {
+  color: var(--ibm-gray-10);
+}
+
+.file-card-meta {
+  font-size: 14px;
+  color: var(--ibm-gray-60);
+}
+
+.file-card-badge {
+  background: rgba(36, 161, 72, 0.1);
+  color: var(--ibm-green);
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 500;
+
+/* Feature with Input Field */
+.feature-with-input {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.feature-with-input > input[type="checkbox"] {
+  margin-bottom: 0;
+}
+
+.feature-with-input .feature-content {
+  width: 100%;
+  margin-left: 32px;
+}
+
+.redact-input {
+  width: 100%;
+  padding: 10px 12px;
+  margin-top: 12px;
+  border: 1px solid var(--ibm-gray-30);
+  border-radius: 4px;
+  font-size: 14px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  background: white;
+  color: var(--ibm-gray-100);
+  transition: border-color 0.2s;
+}
+
+body.dark-mode .redact-input {
+  background: var(--ibm-gray-80);
+  border-color: var(--ibm-gray-70);
+  color: var(--ibm-gray-10);
+}
+
+.redact-input:focus {
+  outline: none;
+  border-color: var(--ibm-blue);
+}
+
+.redact-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.redact-input::placeholder {
+  color: var(--ibm-gray-50);
+}
+}
+
+/* Transcript Options Grid */
+.transcript-options-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.transcript-option-card {
+  background: var(--ibm-gray-10);
+  border: 2px solid var(--ibm-gray-30);
+  border-radius: 8px;
+  padding: 20px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+body.dark-mode .transcript-option-card {
+  background: var(--ibm-gray-90);
+  border-color: var(--ibm-gray-70);
+}
+
+.transcript-option-card:hover {
+  border-color: var(--ibm-blue);
+}
+
+.transcript-option-card.selected {
+  border-color: var(--ibm-blue);
+  background: rgba(15, 98, 254, 0.05);
+}
+
+body.dark-mode .transcript-option-card.selected {
+  background: rgba(15, 98, 254, 0.1);
+}
+
+.transcript-option-card input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+}
+
+.option-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.option-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.option-card-icon {
+  font-size: 20px;
+}
+
+.option-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ibm-gray-100);
+}
+
+body.dark-mode .option-card-title {
+  color: var(--ibm-gray-10);
+}
+
+.info-badge {
+  background: var(--ibm-blue);
+  color: white;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
+  margin-left: auto;
+}
+
+.option-card-description {
+  font-size: 14px;
+  color: var(--ibm-gray-60);
+  line-height: 1.5;
+}
+
+/* Transcript Features (Checkboxes) */
+.transcript-features {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.feature-checkbox {
+  background: var(--ibm-gray-10);
+  border: 1px solid var(--ibm-gray-20);
+  border-radius: 8px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+body.dark-mode .feature-checkbox {
+  background: var(--ibm-gray-90);
+  border-color: var(--ibm-gray-80);
+}
+
+.feature-checkbox:hover {
+  border-color: var(--ibm-blue);
+}
+
+.feature-checkbox input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  cursor: pointer;
+  accent-color: var(--ibm-blue);
+}
+
+.feature-checkbox input[type="checkbox"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.feature-content {
+  flex: 1;
+}
+
+.feature-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ibm-gray-100);
+  margin-bottom: 4px;
+}
+
+body.dark-mode .feature-title {
+  color: var(--ibm-gray-10);
+}
+
+.feature-description {
+  font-size: 14px;
+  color: var(--ibm-gray-60);
+}
+
+/* Transcription Progress Section */
+.transcription-progress-section {
+  background: rgba(15, 98, 254, 0.05);
+  border: 1px solid rgba(15, 98, 254, 0.2);
+  border-radius: 8px;
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+body.dark-mode .transcription-progress-section {
+  background: rgba(15, 98, 254, 0.1);
+}
+
+.progress-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.progress-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ibm-gray-100);
+}
+
+body.dark-mode .progress-section-title {
+  color: var(--ibm-gray-10);
+}
+
+.progress-section-percent {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ibm-blue);
+}
+
+.progress-section-bar {
+  height: 8px;
+  background: var(--ibm-gray-20);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+body.dark-mode .progress-section-bar {
+  background: var(--ibm-gray-80);
+}
+
+.progress-section-fill {
+  height: 100%;
+  background: var(--ibm-blue);
+  transition: width 0.3s ease;
+  border-radius: 4px;
+}
+
+.progress-section-message {
+  font-size: 14px;
+  color: var(--ibm-gray-70);
+}
+
+body.dark-mode .progress-section-message {
+  color: var(--ibm-gray-40);
+}
+
+/* Transcribe Action Buttons */
+.transcribe-actions {
+  display: flex;
+  gap: 16px;
+  margin-top: 32px;
+}
+
+.btn-primary-large,
+.btn-secondary-large {
+  flex: 1;
+  padding: 14px 24px;
+  font-size: 16px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: 'IBM Plex Sans', sans-serif;
+}
+
+.btn-primary-large {
+  background: var(--ibm-blue);
+  color: white;
+}
+
+.btn-primary-large:hover:not(:disabled) {
+  background: var(--ibm-blue-hover);
+}
+
+.btn-primary-large:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary-large {
+  background: var(--ibm-gray-80);
+  color: var(--ibm-gray-10);
+}
+
+body:not(.dark-mode) .btn-secondary-large {
+  background: var(--ibm-gray-20);
+  color: var(--ibm-gray-100);
+}
+
+.btn-secondary-large:hover {
+  background: var(--ibm-gray-70);
+}
+
+body:not(.dark-mode) .btn-secondary-large:hover {
+  background: var(--ibm-gray-30);
+}
+
+/* Responsive Design for Transcribe Tab */
+@media (max-width: 768px) {
+  .transcript-options-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .transcribe-actions {
+    flex-direction: column;
+  }
+  
+  .transcribe-header {
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  .transcript-ready-badge {
+    align-self: flex-start;
+  }
+}
+
+
+/* ===================================
+   Summarize Tab Styles
+   =================================== */
+
+/* Summarize Header with Badge */
+.summarize-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+.summarize-header .transcript-ready-badge {
+  background: rgba(36, 161, 72, 0.1);
+  color: var(--ibm-green);
+  padding: 6px 16px;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+body:not(.dark-mode) .summarize-header .transcript-ready-badge {
+  background: rgba(36, 161, 72, 0.15);
+}
