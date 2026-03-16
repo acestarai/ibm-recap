@@ -845,9 +845,8 @@ body:not(.dark-mode) .upload-drop-zone h3 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 48px;
-  max-width: 1400px;
-  margin: 32px auto 0;
-  padding: 0 32px;
+  margin-top: 32px;
+  width: 100%;
 }
 
 .upload-left-column {
