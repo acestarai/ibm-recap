@@ -840,6 +840,216 @@ body:not(.dark-mode) .upload-drop-zone h3 {
   font-size: 14px;
   color: var(--ibm-gray-50);
 }
+/* Upload Tab Two-Column Layout */
+.upload-tab-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+  margin-top: 32px;
+}
+
+.upload-left-column {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Upload Actions */
+.upload-actions {
+  display: flex;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.upload-actions button {
+  flex: 1;
+}
+
+/* Recent Uploads Panel */
+.recent-uploads-panel {
+  background: var(--ibm-gray-90);
+  border: 1px solid var(--ibm-gray-80);
+  border-radius: 12px;
+  padding: 24px;
+  height: fit-content;
+  position: sticky;
+  top: 24px;
+}
+
+body:not(.dark-mode) .recent-uploads-panel {
+  background: var(--ibm-gray-10);
+  border-color: var(--ibm-gray-20);
+}
+
+.recent-uploads-header {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.search-container {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 16px;
+  font-size: 18px;
+  color: var(--ibm-gray-50);
+  pointer-events: none;
+}
+
+.search-input {
+  width: 100%;
+  padding: 12px 16px 12px 48px;
+  background: var(--ibm-gray-80);
+  border: 1px solid var(--ibm-gray-70);
+  border-radius: 8px;
+  color: var(--ibm-gray-10);
+  font-size: 14px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  transition: all 0.2s;
+}
+
+body:not(.dark-mode) .search-input {
+  background: #ffffff;
+  border-color: var(--ibm-gray-30);
+  color: var(--ibm-gray-100);
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: var(--ibm-blue);
+  box-shadow: 0 0 0 2px rgba(15, 98, 254, 0.1);
+}
+
+.search-input::placeholder {
+  color: var(--ibm-gray-50);
+}
+
+.recent-uploads-badge {
+  background: var(--ibm-gray-70);
+  color: var(--ibm-gray-10);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+body:not(.dark-mode) .recent-uploads-badge {
+  background: var(--ibm-gray-30);
+  color: var(--ibm-gray-100);
+}
+
+.recent-uploads-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.recent-upload-card {
+  background: var(--ibm-gray-80);
+  border: 1px solid var(--ibm-gray-70);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+body:not(.dark-mode) .recent-upload-card {
+  background: #ffffff;
+  border-color: var(--ibm-gray-20);
+}
+
+.recent-upload-card:hover {
+  border-color: var(--ibm-blue);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.recent-upload-card.needs-conversion {
+  border-color: var(--ibm-yellow);
+  background: rgba(241, 194, 27, 0.05);
+}
+
+.recent-upload-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.recent-upload-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.recent-upload-filename {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ibm-gray-10);
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body:not(.dark-mode) .recent-upload-filename {
+  color: var(--ibm-gray-100);
+}
+
+.recent-upload-meta {
+  font-size: 13px;
+  color: var(--ibm-gray-50);
+  line-height: 1.4;
+}
+
+.recent-upload-warning {
+  color: var(--ibm-yellow);
+  font-weight: 500;
+}
+
+.recent-upload-status {
+  flex-shrink: 0;
+}
+
+.status-badge {
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-audio {
+  background: rgba(36, 161, 72, 0.1);
+  color: var(--ibm-green);
+  border: 1px solid var(--ibm-green);
+}
+
+.status-warning {
+  background: rgba(241, 194, 27, 0.1);
+  color: var(--ibm-yellow);
+  border: 1px solid var(--ibm-yellow);
+}
+
+/* Responsive Design for Upload Tab */
+@media (max-width: 1200px) {
+  .upload-tab-content {
+    grid-template-columns: 1fr;
+  }
+  
+  .recent-uploads-panel {
+    position: static;
+  }
+}
+
 
 .upload-success {
   background: rgba(36, 161, 72, 0.1);

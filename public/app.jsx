@@ -492,30 +492,43 @@ function UploadTab({ files, busy, setBusy, refresh }) {
       <h1 className="tab-title">Upload audio file</h1>
       <p className="tab-subtitle">Upload meeting recordings in MP3, M4A, or WAV format</p>
 
-      <div
-        className={`upload-drop-zone ${isDragging ? 'dragging' : ''}`}
-        onDragEnter={handleDragEnter}
-        onDragLeave={handleDragLeave}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
-      >
-        <div className="upload-icon">📁</div>
-        <h3>Drag and drop your audio file here</h3>
-        <p>or</p>
-        <label className="upload-button">
-          <input
-            type="file"
-            accept=".mp3,.m4a,.wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/wave"
-            onChange={handleFileUpload}
-            style={{ display: 'none' }}
-            disabled={busy}
-          />
-          <span className="btn-primary">Browse files</span>
-        </label>
-        <p className="upload-hint">Supported formats: MP3, M4A, WAV (max 100MB)</p>
-      </div>
+      <div className="upload-tab-content">
+        {/* Left Column - Upload and Player */}
+        <div className="upload-left-column">
+          <div
+            className={`upload-drop-zone ${isDragging ? 'dragging' : ''}`}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
+            <div className="upload-icon">📁</div>
+            <h3>Drag and drop your audio file here</h3>
+            <p>or</p>
+            <label className="upload-button">
+              <input
+                type="file"
+                accept=".mp3,.m4a,.wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/wave"
+                onChange={handleFileUpload}
+                style={{ display: 'none' }}
+                disabled={busy}
+              />
+              <span className="btn-primary">Browse files</span>
+            </label>
+            <p className="upload-hint">Supported formats: MP3, M4A, WAV (max 100MB)</p>
+          </div>
 
-      {files.audio && <AudioPlayer audioFile={files.audio} originalFilename={files.originalFilename} />}
+          {files.audio && (
+            <>
+              <AudioPlayer audioFile={files.audio} originalFilename={files.originalFilename} />
+              <UploadActions setActiveTab={setActiveTab} audioFile={files.audio} />
+            </>
+          )}
+        </div>
+
+        {/* Right Column - Recent Uploads */}
+        <RecentUploadsPanel />
+      </div>
     </div>
   );
 }
@@ -702,6 +715,133 @@ function AudioPlayer({ audioFile, originalFilename }) {
 
       <div className="audio-player-info">
         Previewing: <strong>{displayFilename}</strong> • {formatTime(duration)} • Uploaded successfully
+      </div>
+    </div>
+  );
+}
+
+// Upload Actions Component (Download and Continue buttons)
+function UploadActions({ setActiveTab, audioFile }) {
+  const serverFilename = audioFile.split('/').pop();
+  const audioUrl = `/api/audio/${serverFilename}`;
+
+  const handleDownload = () => {
+    const link = document.createElement('a');
+    link.href = audioUrl;
+    link.download = serverFilename;
+    link.click();
+  };
+
+  const handleContinueToTranscription = () => {
+    setActiveTab('transcribe');
+    // Scroll to transcribe tab
+    setTimeout(() => {
+      const transcribeTab = document.querySelector('[data-tab="transcribe"]');
+      if (transcribeTab) {
+        transcribeTab.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 100);
+  };
+
+  return (
+    <div className="upload-actions">
+      <button className="btn-secondary-large" onClick={handleDownload}>
+        ⬇ Download Audio
+      </button>
+      <button className="btn-primary-large" onClick={handleContinueToTranscription}>
+        Continue to Transcription →
+      </button>
+    </div>
+  );
+}
+
+// Recent Uploads Panel Component
+function RecentUploadsPanel() {
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [recentUploads, setRecentUploads] = React.useState([
+    {
+      id: 1,
+      filename: 'Q1_Planning_Sync_0314.m4a',
+      duration: '54 min',
+      source: 'Uploaded from desktop',
+      topic: 'Product Strategy',
+      status: 'audio',
+      date: '2024-03-14'
+    },
+    {
+      id: 2,
+      filename: 'Customer_Advisory_Board.wav',
+      duration: '61 min',
+      source: 'Uploaded from Teams export',
+      topic: '',
+      status: 'audio',
+      date: '2024-03-13'
+    },
+    {
+      id: 3,
+      filename: 'Design_Review.mov',
+      duration: '',
+      source: '',
+      topic: '',
+      status: 'needs-conversion',
+      warning: 'Unsupported format detected • Convert to audio before processing',
+      date: '2024-03-12'
+    }
+  ]);
+
+  const filteredUploads = recentUploads.filter(upload => {
+    const query = searchQuery.toLowerCase();
+    return (
+      upload.filename.toLowerCase().includes(query) ||
+      upload.topic.toLowerCase().includes(query) ||
+      upload.date.includes(query)
+    );
+  });
+
+  return (
+    <div className="recent-uploads-panel">
+      <div className="recent-uploads-header">
+        <div className="search-container">
+          <span className="search-icon">🔍</span>
+          <input
+            type="text"
+            className="search-input"
+            placeholder="Search recent uploads"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+        <div className="recent-uploads-badge">Recent uploads</div>
+      </div>
+
+      <div className="recent-uploads-list">
+        {filteredUploads.map(upload => (
+          <div key={upload.id} className={`recent-upload-card ${upload.status}`}>
+            <div className="recent-upload-icon">
+              {upload.status === 'needs-conversion' ? '⚠️' : '🎵'}
+            </div>
+            <div className="recent-upload-info">
+              <div className="recent-upload-filename">{upload.filename}</div>
+              <div className="recent-upload-meta">
+                {upload.status === 'needs-conversion' ? (
+                  <span className="recent-upload-warning">{upload.warning}</span>
+                ) : (
+                  <>
+                    {upload.duration} • {upload.source}
+                    {upload.topic && ` • ${upload.topic}`}
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="recent-upload-status">
+              {upload.status === 'audio' ? (
+                <span className="status-badge status-audio">Audio ✓</span>
+              ) : (
+                <span className="status-badge status-warning">Needs conversion</span>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
