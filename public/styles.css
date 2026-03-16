@@ -841,12 +841,21 @@ body:not(.dark-mode) .upload-drop-zone h3 {
   color: var(--ibm-gray-50);
 }
 /* Upload Tab Two-Column Layout */
+.upload-tab {
+  max-width: none !important;
+  width: 100%;
+}
+
 .upload-tab-content {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 48px;
+  gap: 64px;
   margin-top: 32px;
   width: 100%;
+  max-width: 1800px;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 0 48px;
 }
 
 .upload-left-column {
