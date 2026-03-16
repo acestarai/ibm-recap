@@ -231,15 +231,14 @@ function App() {
             </div>
           </div>
           <div className="hero-video">
-            <iframe
-              src="https://ibm.ent.box.com/embed/s/ed5ha1bvn3jfbcxfjz3d19gg26nksvri?sortColumn=date"
+            <video
+              controls
               className="demo-video"
-              frameBorder="0"
-              allow="local-network-access *; clipboard-read *; clipboard-write *"
-              allowFullScreen
-              webkitallowfullscreen
-              msallowfullscreen
-            ></iframe>
+              preload="metadata"
+            >
+              <source src="https://ibm.box.com/shared/static/ed5ha1bvn3jfbcxfjz3d19gg26nksvri.mp4" type="video/mp4" />
+              Your browser does not support the video tag.
+            </video>
           </div>
         </div>
       </section>
