@@ -237,7 +237,7 @@ function App() {
               className="demo-video"
               preload="metadata"
             >
-              <source src="https://ibm.box.com/shared/static/h2qz5n6coyocw2lv825ieimis346l9ss.mp4" type="video/mp4" />
+              <source src="https://ibm.box.com/shared/static/d4j12grykjmqoj7cp6zvpxnikrwm9tjo.mp4" type="video/mp4" />
               Your browser does not support the video tag.
             </video>
           </div>
