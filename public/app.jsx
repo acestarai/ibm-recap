@@ -2,8 +2,7 @@ const { useEffect, useState } = React;
 
 function MainApp() {
   // Get auth context
-  const { user, logout } = useAuth();
-  const token = null; // Temporarily disabled for testing
+  const { user, logout, token } = useAuth();
   
   // Active tab state
   const [activeTab, setActiveTab] = useState('home');
@@ -18,45 +17,13 @@ function MainApp() {
   // Search and filter state
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [homeDateFilter, setHomeDateFilter] = useState('all');
   
-  // File history state (localStorage)
-  const [fileHistory, setFileHistory] = useState(() => {
-    const saved = localStorage.getItem('fileHistory');
-    return saved ? JSON.parse(saved) : [
-      {
-        id: '1',
-        filename: 'Q1_Planning_Sync_0314.m4a',
-        uploadedAt: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-        duration: '54 min',
-        category: 'Product Strategy',
-        status: 'audio',
-        hasTranscript: false,
-        hasSummary: false
-      },
-      {
-        id: '2',
-        filename: 'Client_Retention_Review.wav',
-        uploadedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-        duration: '42 min',
-        category: 'Client Meeting',
-        status: 'transcript',
-        hasTranscript: true,
-        hasSummary: false,
-        speakerDiarization: true
-      },
-      {
-        id: '3',
-        filename: 'Weekly_Operations_Checkin.mp3',
-        uploadedAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
-        duration: '28 min',
-        category: 'Internal',
-        status: 'summary',
-        hasTranscript: true,
-        hasSummary: true,
-        actionItems: 8
-      }
-    ];
-  });
+  const [accountFiles, setAccountFiles] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [accountProfile, setAccountProfile] = useState(null);
+  const [storageUsage, setStorageUsage] = useState(null);
+  const [accountLoading, setAccountLoading] = useState(true);
   
   // Main app state (from original)
   const [busy, setBusy] = useState(false);
@@ -92,11 +59,6 @@ function MainApp() {
     localStorage.setItem('darkMode', darkMode);
   }, [darkMode]);
   
-  // Save file history to localStorage
-  useEffect(() => {
-    localStorage.setItem('fileHistory', JSON.stringify(fileHistory));
-  }, [fileHistory]);
-  
   // Close user menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -114,31 +76,99 @@ function MainApp() {
   };
   
   const refresh = async () => {
-    const r = await fetch(`/api/status?t=${Date.now()}`);
-    const j = await r.json();
-    const isRec = !!j.recording?.isRecording;
-    const isStopping = !!j.recording?.isStopping;
-    setRecording(isRec);
-    setStopping(isStopping);
-    
-    const normalizedFiles = {
-      audio: j.files?.audio || null,
-      originalFilename: j.files?.originalFilename || null,
-      transcript: j.files?.transcript || null,
-      summary: j.files?.summary || null
-    };
-    setFiles(normalizedFiles);
+    if (token) {
+      setHistoryLoading(true);
+      setAccountLoading(true);
+    }
+
+    try {
+      const requests = [
+        fetch(`/api/status?t=${Date.now()}`)
+      ];
+
+      if (token) {
+        requests.push(fetch('/api/files', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }));
+        requests.push(fetch('/api/auth/account', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }));
+      }
+
+      const responses = await Promise.all(requests);
+      const statusResponse = responses[0];
+      const statusJson = await statusResponse.json();
+
+      const isRec = !!statusJson.recording?.isRecording;
+      const isStopping = !!statusJson.recording?.isStopping;
+      setRecording(isRec);
+      setStopping(isStopping);
+
+      const normalizedFiles = {
+        audio: statusJson.files?.audio || null,
+        originalFilename: statusJson.files?.originalFilename || null,
+        transcript: statusJson.files?.transcript || null,
+        summary: statusJson.files?.summary || null
+      };
+      setFiles(normalizedFiles);
+
+      if (token && responses[1]) {
+        const filesResponse = responses[1];
+        const filesJson = await filesResponse.json();
+        if (filesResponse.ok && filesJson.ok) {
+          setAccountFiles(filesJson.files || []);
+        } else {
+          console.error('Failed to load account file history:', filesJson.error);
+          setAccountFiles([]);
+        }
+      }
+
+      if (token && responses[2]) {
+        const accountResponse = responses[2];
+        const accountJson = await accountResponse.json();
+        if (accountResponse.ok) {
+          setAccountProfile(accountJson.user || null);
+          setStorageUsage(accountJson.storage || null);
+        } else {
+          console.error('Failed to load account profile:', accountJson.error);
+          setAccountProfile(null);
+          setStorageUsage(null);
+        }
+      }
+    } catch (error) {
+      console.error('Refresh failed:', error);
+    } finally {
+      setHistoryLoading(false);
+      setAccountLoading(false);
+    }
   };
   
   useEffect(() => {
     refresh();
-  }, []);
+  }, [token]);
+
+  const historyEntries = buildHistoryEntries(accountFiles);
+  const groupedHistory = buildGroupedHistory(historyEntries);
 
   // Filter files based on search
-  const filteredFiles = fileHistory.filter(file =>
-    file.filename.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    file.category.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredFiles = groupedHistory.filter(file => {
+    const query = searchQuery.toLowerCase().trim();
+    const searchableFields = [
+      file.filename,
+      file.displayDate,
+      file.statusLabel,
+      file.fileTypeLabel,
+      ...(file.relatedOutputs || []),
+      ...(file.infoChips || [])
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    const matchesSearch = !query || searchableFields.includes(query);
+    return matchesSearch && matchesDateFilter(file.uploadedAt, homeDateFilter);
+  });
 
   // Tab navigation
   const tabs = [
@@ -197,6 +227,9 @@ function MainApp() {
                   <div className="user-dropdown-email">{user.email}</div>
                 </div>
                 <div className="user-dropdown-divider"></div>
+                <button className="user-dropdown-item" onClick={() => { setActiveTab('account'); setShowUserMenu(false); }}>
+                  <span>👤</span> Account settings
+                </button>
                 <button className="user-dropdown-item" onClick={logout}>
                   <span>🚪</span> Logout
                 </button>
@@ -206,82 +239,90 @@ function MainApp() {
         </div>
       </header>
 
-      {/* Hero Section */}
-      <section className="hero-section-wrapper">
-        <div className="hero-section">
-          <div className="hero-content">
-            <h1 className="hero-title">From meeting chaos to structured documentation in minutes.</h1>
-            <p className="hero-description">
-              Transform your Microsoft Teams meetings into actionable insights. IBM Recap automatically transcribes,
-              summarizes, and organizes your conversations—giving you more time to focus on what matters.
-            </p>
-            
-            {/* Hero Action Buttons */}
-            <div className="hero-actions">
-              <button className="hero-btn hero-btn-primary" onClick={scrollToHomeDashboard}>
-                View Home Dashboard
-              </button>
-              <button className="hero-btn hero-btn-secondary" onClick={() => scrollToTab('upload')}>
-                Jump to upload flow
-              </button>
-              <button className="hero-btn hero-btn-tertiary" onClick={() => scrollToTab('analytics')}>
-                Preview analytics
-              </button>
+      {activeTab !== 'account' && (
+        <>
+          {/* Hero Section */}
+          <section className="hero-section-wrapper">
+            <div className="hero-section">
+              <div className="hero-content">
+                <h1 className="hero-title">From meeting chaos to structured documentation in minutes.</h1>
+                <p className="hero-description">
+                  Transform your Microsoft Teams meetings into actionable insights. IBM Recap automatically transcribes,
+                  summarizes, and organizes your conversations—giving you more time to focus on what matters.
+                </p>
+                
+                {/* Hero Action Buttons */}
+                <div className="hero-actions">
+                  <button className="hero-btn hero-btn-primary" onClick={scrollToHomeDashboard}>
+                    View Home Dashboard
+                  </button>
+                  <button className="hero-btn hero-btn-secondary" onClick={() => scrollToTab('upload')}>
+                    Jump to upload flow
+                  </button>
+                  <button className="hero-btn hero-btn-tertiary" onClick={() => scrollToTab('analytics')}>
+                    Preview analytics
+                  </button>
+                </div>
+                
+                {/* Hero Stats */}
+                <div className="hero-stats">
+                  <div className="hero-stat-card">
+                    <div className="hero-stat-label">Average turnaround</div>
+                    <div className="hero-stat-value">4.2 min</div>
+                    <div className="hero-stat-desc">Audio → transcript → summary</div>
+                  </div>
+                  <div className="hero-stat-card">
+                    <div className="hero-stat-label">Transcript accuracy</div>
+                    <div className="hero-stat-value">95%</div>
+                    <div className="hero-stat-desc">With timestamps and speaker ID</div>
+                  </div>
+                  <div className="hero-stat-card">
+                    <div className="hero-stat-label">Searchable records</div>
+                    <div className="hero-stat-value">1,248</div>
+                    <div className="hero-stat-desc">Across Teams and uploads</div>
+                  </div>
+                </div>
+              </div>
+              <div className="hero-video">
+                <video
+                  controls
+                  className="demo-video"
+                  preload="metadata"
+                >
+                  <source src="https://mlivtijnumtedtqplnnj.supabase.co/storage/v1/object/public/videos/IBM%20Recap%20demo.mp4" type="video/mp4" />
+                  Your browser does not support the video tag.
+                </video>
+              </div>
             </div>
-            
-            {/* Hero Stats */}
-            <div className="hero-stats">
-              <div className="hero-stat-card">
-                <div className="hero-stat-label">Average turnaround</div>
-                <div className="hero-stat-value">4.2 min</div>
-                <div className="hero-stat-desc">Audio → transcript → summary</div>
-              </div>
-              <div className="hero-stat-card">
-                <div className="hero-stat-label">Transcript accuracy</div>
-                <div className="hero-stat-value">95%</div>
-                <div className="hero-stat-desc">With timestamps and speaker ID</div>
-              </div>
-              <div className="hero-stat-card">
-                <div className="hero-stat-label">Searchable records</div>
-                <div className="hero-stat-value">1,248</div>
-                <div className="hero-stat-desc">Across Teams and uploads</div>
-              </div>
-            </div>
-          </div>
-          <div className="hero-video">
-            <video
-              controls
-              className="demo-video"
-              preload="metadata"
-            >
-              <source src="https://mlivtijnumtedtqplnnj.supabase.co/storage/v1/object/public/videos/IBM%20Recap%20demo.mp4" type="video/mp4" />
-              Your browser does not support the video tag.
-            </video>
-          </div>
-        </div>
-      </section>
+          </section>
 
-      {/* Tab Navigation */}
-      <nav className="tab-navigation" ref={tabNavigationRef}>
-        {tabs.map(tab => (
-          <button
-            key={tab.id}
-            className={`tab-button ${activeTab === tab.id ? 'active' : ''} ${tab.disabled ? 'disabled' : ''}`}
-            onClick={() => !tab.disabled && setActiveTab(tab.id)}
-            disabled={tab.disabled}
-          >
-            <span className="tab-icon">{tab.icon}</span>
-            <span className="tab-label">{tab.label}</span>
-          </button>
-        ))}
-      </nav>
+          {/* Tab Navigation */}
+          <nav className="tab-navigation" ref={tabNavigationRef}>
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                className={`tab-button ${activeTab === tab.id ? 'active' : ''} ${tab.disabled ? 'disabled' : ''}`}
+                onClick={() => !tab.disabled && setActiveTab(tab.id)}
+                disabled={tab.disabled}
+              >
+                <span className="tab-icon">{tab.icon}</span>
+                <span className="tab-label">{tab.label}</span>
+              </button>
+            ))}
+          </nav>
+        </>
+      )}
 
       {/* Main Content Area */}
       <main className="main-content-area">
         {activeTab === 'home' && <HomeTab
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
+          homeDateFilter={homeDateFilter}
+          setHomeDateFilter={setHomeDateFilter}
           filteredFiles={filteredFiles}
+          groupedHistory={groupedHistory}
+          historyLoading={historyLoading}
           setActiveTab={setActiveTab}
           homeDashboardRef={homeDashboardRef}
         />}
@@ -303,6 +344,8 @@ function MainApp() {
           setTranscriptType={setTranscriptType}
           transcriptOptions={transcriptOptions}
           setTranscriptOptions={setTranscriptOptions}
+          historyEntries={historyEntries}
+          historyLoading={historyLoading}
           setBusy={setBusy}
           refresh={refresh}
           setActiveTab={setActiveTab}
@@ -317,12 +360,22 @@ function MainApp() {
           setSummaryType={setSummaryType}
           structuredSections={structuredSections}
           setStructuredSections={setStructuredSections}
+          historyEntries={historyEntries}
+          historyLoading={historyLoading}
           setBusy={setBusy}
           refresh={refresh}
           setActiveTab={setActiveTab}
         />}
         
         {activeTab === 'record' && <RecordTab />}
+
+        {activeTab === 'account' && <AccountTab
+          accountProfile={accountProfile}
+          storageUsage={storageUsage}
+          accountLoading={accountLoading}
+          onBack={() => setActiveTab('home')}
+          refresh={refresh}
+        />}
         
         {activeTab === 'analytics' && <AnalyticsTab />}
       </main>
@@ -331,7 +384,12 @@ function MainApp() {
 }
 
 // Home Tab Component
-function HomeTab({ searchQuery, setSearchQuery, filteredFiles, setActiveTab, homeDashboardRef }) {
+function HomeTab({ searchQuery, setSearchQuery, homeDateFilter, setHomeDateFilter, filteredFiles, groupedHistory, historyLoading, setActiveTab, homeDashboardRef }) {
+  const uploadedCount = groupedHistory.length;
+  const pendingTranscriptCount = groupedHistory.filter((file) => file.status === 'audio').length;
+  const summaryCount = groupedHistory.filter((file) => file.hasSummary).length;
+  const recommendedFile = groupedHistory.find((file) => !file.hasTranscript) || groupedHistory[0] || null;
+
   return (
     <div className="home-tab">
       <div className="home-header" ref={homeDashboardRef}>
@@ -344,15 +402,15 @@ function HomeTab({ searchQuery, setSearchQuery, filteredFiles, setActiveTab, hom
       <div className="stats-grid">
         <div className="stat-card">
           <div className="stat-label">Uploaded files</div>
-          <div className="stat-value">18</div>
+          <div className="stat-value">{uploadedCount}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Pending transcripts</div>
-          <div className="stat-value">4</div>
+          <div className="stat-value">{pendingTranscriptCount}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Summaries generated</div>
-          <div className="stat-value">42</div>
+          <div className="stat-value">{summaryCount}</div>
           <div className="stat-badge">Structured default</div>
         </div>
         <div className="stat-card">
@@ -369,11 +427,18 @@ function HomeTab({ searchQuery, setSearchQuery, filteredFiles, setActiveTab, hom
           <div className="recommended-text">
             <div className="recommended-title">Recommended next step</div>
             <div className="recommended-action">
-              Transcribe <span className="filename">Q1_Planning_Sync_0314.m4a</span> to unlock summary generation.
+              {recommendedFile
+                ? (recommendedFile.hasTranscript
+                  ? <>Generate a summary for <span className="filename">{recommendedFile.filename}</span>.</>
+                  : <>Transcribe <span className="filename">{recommendedFile.filename}</span> to unlock summary generation.</>)
+                : 'Upload your first meeting recording to start building searchable history.'}
             </div>
           </div>
         </div>
-        <button className="btn-primary" onClick={() => setActiveTab('transcribe')}>
+        <button
+          className="btn-primary"
+          onClick={() => setActiveTab(recommendedFile?.hasTranscript ? 'summarize' : 'transcribe')}
+        >
           Open tab
         </button>
       </div>
@@ -384,20 +449,43 @@ function HomeTab({ searchQuery, setSearchQuery, filteredFiles, setActiveTab, hom
           <span className="search-icon">🔍</span>
           <input
             type="text"
-            placeholder="Search recent uploads, transcripts, and summaries"
+            placeholder="Search by filename, file type, output, or date"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="search-input"
           />
         </div>
-        <button className="filters-button">Filters</button>
+        <select
+          className="filters-select"
+          value={homeDateFilter}
+          onChange={(e) => setHomeDateFilter(e.target.value)}
+        >
+          <option value="all">All dates</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+          <option value="year">This year</option>
+        </select>
       </div>
 
       {/* Recent Files */}
       <div className="files-section">
         <h2 className="section-title">Recent files</h2>
         <div className="files-list">
-          {filteredFiles.map(file => (
+          {historyLoading ? (
+            <div className="file-card">
+              <div className="file-info">
+                <div className="file-name">Loading your account history...</div>
+                <div className="file-meta">Fetching uploads, transcripts, and summaries for your account.</div>
+              </div>
+            </div>
+          ) : filteredFiles.length === 0 ? (
+            <div className="file-card">
+              <div className="file-info">
+                <div className="file-name">No matching files found</div>
+                <div className="file-meta">Try a different keyword or upload your first meeting recording.</div>
+              </div>
+            </div>
+          ) : filteredFiles.map(file => (
             <div key={file.id} className="file-card">
               <div className="file-icon">
                 {file.status === 'audio' && '🎧'}
@@ -407,15 +495,14 @@ function HomeTab({ searchQuery, setSearchQuery, filteredFiles, setActiveTab, hom
               <div className="file-info">
                 <div className="file-name">{file.filename}</div>
                 <div className="file-meta">
-                  Uploaded {getTimeAgo(file.uploadedAt)} • {file.duration} • {file.category}
-                  {file.speakerDiarization && ' • Speaker ID enabled'}
-                  {file.actionItems && ` • ${file.actionItems} action items`}
+                  Uploaded {getTimeAgo(file.uploadedAt)} ({file.displayDate}) • {file.fileTypeLabel}
+                  {file.infoChips.length > 0 && ` • ${file.infoChips.join(' • ')}`}
+                  {file.relatedOutputs.length > 0 && ` • Related outputs: ${file.relatedOutputs.join(', ')}`}
                 </div>
               </div>
               <div className="file-status">
-                {file.status === 'audio' && <span className="badge badge-warning">Audio only</span>}
-                {file.status === 'transcript' && <span className="badge badge-success">Transcript ✓</span>}
-                {file.status === 'summary' && <span className="badge badge-success">Summary ✓</span>}
+                {file.status === 'audio' && <span className="badge badge-warning">{file.statusLabel}</span>}
+                {(file.status === 'transcript' || file.status === 'summary') && <span className="badge badge-success">{file.statusLabel}</span>}
               </div>
             </div>
           ))}
@@ -428,6 +515,7 @@ function HomeTab({ searchQuery, setSearchQuery, filteredFiles, setActiveTab, hom
 // Upload Tab Component
 function UploadTab({ files, busy, setBusy, refresh, setActiveTab }) {
   const [isDragging, setIsDragging] = useState(false);
+  const [uploadState, setUploadState] = useState(null);
 
   const handleDragEnter = (e) => {
     e.preventDefault();
@@ -464,12 +552,12 @@ function UploadTab({ files, busy, setBusy, refresh, setActiveTab }) {
   const uploadFile = async (file) => {
     if (!file) return;
     
-    const validTypes = ['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/wav', 'audio/wave'];
-    const validExtensions = ['.mp3', '.m4a', '.wav'];
+    const validTypes = ['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/wav', 'audio/wave', 'video/mp4'];
+    const validExtensions = ['.mp3', '.m4a', '.wav', '.mp4'];
     const fileExtension = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
     
     if (!validTypes.includes(file.type) && !validExtensions.includes(fileExtension)) {
-      alert('Invalid file type. Please upload MP3, M4A, or WAV files.');
+      alert('Invalid file type. Please upload MP3, M4A, WAV, or MP4 files.');
       return;
     }
     
@@ -478,27 +566,79 @@ function UploadTab({ files, busy, setBusy, refresh, setActiveTab }) {
     
     try {
       setBusy(true);
-      const headers = {};
-      // Get token from localStorage directly to avoid scope issues
-      const authToken = localStorage.getItem('auth_token');
-      if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
-      }
-      const r = await fetch('/api/upload-audio', {
-        method: 'POST',
-        headers: headers,
-        body: formData,
+      setUploadState({
+        status: 'uploading',
+        percent: 0,
+        message: 'Uploading file...'
       });
-      const j = await r.json();
-      if (!r.ok || !j.ok) throw new Error(j.error || 'Upload failed');
+
+      const result = await uploadWithProgress(formData, setUploadState);
+      if (!result.ok) throw new Error(result.error || 'Upload failed');
       
       await new Promise(resolve => setTimeout(resolve, 100));
       await refresh();
+      setUploadState({
+        status: 'done',
+        percent: 100,
+        message: result.message || 'Upload complete.'
+      });
     } catch (e) {
+      setUploadState({
+        status: 'error',
+        percent: 100,
+        message: e.message
+      });
       alert(`Upload error: ${e.message}`);
     } finally {
       setBusy(false);
     }
+  };
+
+  const uploadWithProgress = (formData, setProgress) => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/upload-audio');
+
+      const authToken = localStorage.getItem('auth_token');
+      if (authToken) {
+        xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
+      }
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percent = Math.min(Math.round((event.loaded / event.total) * 100), 99);
+          setProgress({
+            status: 'uploading',
+            percent,
+            message: `Uploading file... ${percent}%`
+          });
+        }
+      };
+
+      xhr.onload = () => {
+        let responseData = null;
+        try {
+          responseData = JSON.parse(xhr.responseText);
+        } catch (parseError) {
+          reject(new Error('Upload failed with an unexpected response.'));
+          return;
+        }
+
+        if (xhr.status >= 200 && xhr.status < 300) {
+          setProgress({
+            status: 'processing',
+            percent: 100,
+            message: 'Upload complete. Processing media...'
+          });
+          resolve(responseData);
+        } else {
+          reject(new Error(responseData.error || 'Upload failed'));
+        }
+      };
+
+      xhr.onerror = () => reject(new Error('Network error during upload'));
+      xhr.send(formData);
+    });
   };
 
   const handleFileUpload = async (event) => {
@@ -506,11 +646,17 @@ function UploadTab({ files, busy, setBusy, refresh, setActiveTab }) {
     await uploadFile(file);
     event.target.value = '';
   };
+  const displayedAudio = files.audio
+    ? {
+        audioFile: files.audio,
+        originalFilename: files.originalFilename
+      }
+    : null;
 
   return (
     <div className="upload-tab">
       <h1 className="tab-title">Upload audio file</h1>
-      <p className="tab-subtitle">Upload meeting recordings in MP3, M4A, or WAV format</p>
+      <p className="tab-subtitle">Upload meeting recordings in MP3, M4A, WAV, or MP4 format. MP4 videos are converted to MP3 automatically.</p>
 
       <div className="upload-tab-content">
         {/* Left Column - Upload and Player */}
@@ -528,26 +674,47 @@ function UploadTab({ files, busy, setBusy, refresh, setActiveTab }) {
             <label className="upload-button">
               <input
                 type="file"
-                accept=".mp3,.m4a,.wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/wave"
+                accept=".mp3,.m4a,.wav,.mp4,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/wave,video/mp4"
                 onChange={handleFileUpload}
                 style={{ display: 'none' }}
                 disabled={busy}
               />
               <span className="btn-primary">Browse files</span>
             </label>
-            <p className="upload-hint">Supported formats: MP3, M4A, WAV (max 100MB)</p>
+            <p className="upload-hint">Supported formats: MP3, M4A, WAV, MP4 (max 500MB upload before conversion, MP4 converts to MP3)</p>
           </div>
 
-          {files.audio && (
+          {uploadState && (
+            <div className="transcription-progress-section">
+              <div className="progress-section-header">
+                <span className="progress-section-title">Upload status</span>
+                <span className="progress-section-percent">{uploadState.percent || 0}%</span>
+              </div>
+              <div className="progress-section-bar">
+                <div className="progress-section-fill" style={{ width: `${uploadState.percent || 0}%` }} />
+              </div>
+              <p className="progress-section-message">{uploadState.message}</p>
+            </div>
+          )}
+
+          {displayedAudio && (
             <>
-              <AudioPlayer audioFile={files.audio} originalFilename={files.originalFilename} />
-              <UploadActions setActiveTab={setActiveTab} audioFile={files.audio} />
+              <AudioPlayer audioFile={displayedAudio.audioFile} originalFilename={displayedAudio.originalFilename} />
+              <UploadActions
+                setActiveTab={setActiveTab}
+                audioFile={displayedAudio.audioFile}
+                originalFilename={displayedAudio.originalFilename}
+                showContinueAction={!!files.audio}
+              />
             </>
           )}
         </div>
 
-        {/* Right Column - Recent Uploads */}
-        <RecentUploadsPanel />
+        <UploadWorkflowPanel
+          files={files}
+          uploadState={uploadState}
+          setActiveTab={setActiveTab}
+        />
       </div>
     </div>
   );
@@ -564,13 +731,16 @@ function AudioPlayer({ audioFile, originalFilename }) {
   const [showMoreOptions, setShowMoreOptions] = React.useState(false);
   const [playbackRate, setPlaybackRate] = React.useState(1);
 
-  // Extract server filename from path and construct audio URL
-  const serverFilename = audioFile.split('/').pop();
-  const audioUrl = `/api/audio/${serverFilename}`;
-  // Use original filename for display, fallback to server filename
-  const displayFilename = originalFilename || serverFilename;
+  const isRemoteAudio = /^https?:\/\//i.test(audioFile);
+  const serverFilename = isRemoteAudio ? null : audioFile.split('/').pop();
+  const audioUrl = isRemoteAudio ? audioFile : `/api/audio/${serverFilename}`;
+  const displayFilename = originalFilename || serverFilename || 'audio.mp3';
   
   React.useEffect(() => {
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+
     const audio = audioRef.current;
     if (!audio) return;
 
@@ -734,21 +904,23 @@ function AudioPlayer({ audioFile, originalFilename }) {
       </div>
 
       <div className="audio-player-info">
-        Previewing: <strong>{displayFilename}</strong> • {formatTime(duration)} • Uploaded successfully
+        Previewing: <strong>{displayFilename}</strong> • {formatTime(duration)} • Ready to play
       </div>
     </div>
   );
 }
 
 // Upload Actions Component (Download and Continue buttons)
-function UploadActions({ setActiveTab, audioFile }) {
-  const serverFilename = audioFile.split('/').pop();
-  const audioUrl = `/api/audio/${serverFilename}`;
+function UploadActions({ setActiveTab, audioFile, originalFilename, showContinueAction = true }) {
+  const isRemoteAudio = /^https?:\/\//i.test(audioFile);
+  const serverFilename = isRemoteAudio ? null : audioFile.split('/').pop();
+  const audioUrl = isRemoteAudio ? audioFile : `/api/audio/${serverFilename}`;
+  const downloadFilename = originalFilename || serverFilename || 'audio.mp3';
 
   const handleDownload = () => {
     const link = document.createElement('a');
     link.href = audioUrl;
-    link.download = serverFilename;
+    link.download = downloadFilename;
     link.click();
   };
 
@@ -768,219 +940,205 @@ function UploadActions({ setActiveTab, audioFile }) {
       <button className="btn-secondary-large" onClick={handleDownload}>
         ⬇ Download Audio
       </button>
-      <button className="btn-primary-large" onClick={handleContinueToTranscription}>
-        Continue to Transcription →
-      </button>
+      {showContinueAction && (
+        <button className="btn-primary-large" onClick={handleContinueToTranscription}>
+          Continue to Transcription →
+        </button>
+      )}
     </div>
   );
 }
 
-// Recent Uploads Panel Component
-function RecentUploadsPanel() {
-  const [searchQuery, setSearchQuery] = React.useState('');
-  const [recentUploads, setRecentUploads] = React.useState([
-    {
-      id: 1,
-      filename: 'Q1_Planning_Sync_0314.m4a',
-      duration: '54 min',
-      source: 'Uploaded from desktop',
-      topic: 'Product Strategy',
-      status: 'audio',
-      date: '2024-03-14'
-    },
-    {
-      id: 2,
-      filename: 'Customer_Advisory_Board.wav',
-      duration: '61 min',
-      source: 'Uploaded from Teams export',
-      topic: '',
-      status: 'audio',
-      date: '2024-03-13'
-    },
-    {
-      id: 3,
-      filename: 'Design_Review.mov',
-      duration: '',
-      source: '',
-      topic: '',
-      status: 'needs-conversion',
-      warning: 'Unsupported format detected • Convert to audio before processing',
-      date: '2024-03-12'
-    }
-  ]);
-
-  const filteredUploads = recentUploads.filter(upload => {
-    const query = searchQuery.toLowerCase();
-    return (
-      upload.filename.toLowerCase().includes(query) ||
-      upload.topic.toLowerCase().includes(query) ||
-      upload.date.includes(query)
-    );
-  });
+function UploadWorkflowPanel({ files, uploadState, setActiveTab }) {
+  const displayFilename = files.originalFilename || files.audio?.split('/').pop() || 'No file selected';
+  const lowerFilename = displayFilename.toLowerCase();
+  const fileExtension = displayFilename.includes('.') ? displayFilename.split('.').pop().toUpperCase() : 'Unknown';
+  const uploadStatusLabel = uploadState?.status === 'error'
+    ? 'Needs attention'
+    : uploadState?.status === 'done'
+      ? 'Ready for transcription'
+      : uploadState?.status === 'processing'
+        ? 'Converting and preparing'
+        : uploadState?.status === 'uploading'
+          ? 'Uploading now'
+          : files.audio
+            ? 'Available temporarily'
+            : 'Waiting for upload';
+  const uploadStatusTone = uploadState?.status === 'error'
+    ? 'warning'
+    : uploadState?.status === 'done' || files.audio
+      ? 'success'
+      : 'neutral';
+  const sourceType = lowerFilename.endsWith('.mp4') ? 'Teams video upload' : 'Audio upload';
+  const stepStates = {
+    uploaded: uploadState?.status === 'uploading' || uploadState?.status === 'processing' || uploadState?.status === 'done' || !!files.audio,
+    converted: lowerFilename.endsWith('.mp4')
+      ? (uploadState?.status === 'processing' || uploadState?.status === 'done' || !!files.audio)
+      : !!files.audio,
+    ready: !!files.audio
+  };
 
   return (
-    <div className="recent-uploads-panel">
-      <div className="recent-uploads-header">
-        <div className="search-container">
-          <span className="search-icon">🔍</span>
-          <input
-            type="text"
-            className="search-input"
-            placeholder="Search recent uploads"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+    <div className="upload-right-column">
+      <section className="upload-workflow-panel">
+        <div className="upload-workflow-header">
+          <div>
+            <div className="upload-workflow-eyebrow">Workflow status</div>
+            <h2 className="upload-workflow-title">Current file journey</h2>
+          </div>
+          <span className={`upload-workflow-badge ${uploadStatusTone}`}>{uploadStatusLabel}</span>
         </div>
-        <div className="recent-uploads-badge">Recent uploads</div>
-      </div>
 
-      <div className="recent-uploads-list">
-        {filteredUploads.map(upload => (
-          <div key={upload.id} className={`recent-upload-card ${upload.status}`}>
-            <div className="recent-upload-icon">
-              {upload.status === 'needs-conversion' ? '⚠️' : '🎵'}
-            </div>
-            <div className="recent-upload-info">
-              <div className="recent-upload-filename">{upload.filename}</div>
-              <div className="recent-upload-meta">
-                {upload.status === 'needs-conversion' ? (
-                  <span className="recent-upload-warning">{upload.warning}</span>
-                ) : (
-                  <>
-                    {upload.duration} • {upload.source}
-                    {upload.topic && ` • ${upload.topic}`}
-                  </>
-                )}
+        <div className="upload-workflow-steps">
+          <div className={`upload-workflow-step ${stepStates.uploaded ? 'complete' : ''}`}>
+            <div className="upload-workflow-step-icon">{stepStates.uploaded ? '✓' : '1'}</div>
+            <div>
+              <div className="upload-workflow-step-title">Upload intake</div>
+              <div className="upload-workflow-step-copy">
+                {uploadState?.status === 'uploading'
+                  ? uploadState.message
+                  : 'Bring in a meeting recording from your device.'}
               </div>
             </div>
-            <div className="recent-upload-status">
-              {upload.status === 'audio' ? (
-                <span className="status-badge status-audio">Audio ✓</span>
-              ) : (
-                <span className="status-badge status-warning">Needs conversion</span>
-              )}
+          </div>
+
+          <div className={`upload-workflow-step ${stepStates.converted ? 'complete' : ''}`}>
+            <div className="upload-workflow-step-icon">{stepStates.converted ? '✓' : '2'}</div>
+            <div>
+              <div className="upload-workflow-step-title">Media preparation</div>
+              <div className="upload-workflow-step-copy">
+                {lowerFilename.endsWith('.mp4')
+                  ? 'MP4 recordings are converted to MP3 immediately after upload.'
+                  : 'Audio uploads are validated and prepared for transcription.'}
+              </div>
             </div>
           </div>
-        ))}
-      </div>
+
+          <div className={`upload-workflow-step ${stepStates.ready ? 'complete' : ''}`}>
+            <div className="upload-workflow-step-icon">{stepStates.ready ? '✓' : '3'}</div>
+            <div>
+              <div className="upload-workflow-step-title">Ready for next step</div>
+              <div className="upload-workflow-step-copy">
+                {files.audio
+                  ? 'Preview the audio, then continue to transcription while the temporary file is available.'
+                  : 'Your uploaded file will appear here as soon as it is ready.'}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="upload-workflow-panel">
+        <div className="upload-workflow-header">
+          <div>
+            <div className="upload-workflow-eyebrow">File details</div>
+            <h2 className="upload-workflow-title">Working artifact</h2>
+          </div>
+        </div>
+
+        <div className="upload-detail-grid">
+          <div className="upload-detail-card">
+            <div className="upload-detail-label">Filename</div>
+            <div className="upload-detail-value break">{displayFilename}</div>
+          </div>
+          <div className="upload-detail-card">
+            <div className="upload-detail-label">Source type</div>
+            <div className="upload-detail-value">{sourceType}</div>
+          </div>
+          <div className="upload-detail-card">
+            <div className="upload-detail-label">Detected format</div>
+            <div className="upload-detail-value">{fileExtension}</div>
+          </div>
+          <div className="upload-detail-card">
+            <div className="upload-detail-label">Retention</div>
+            <div className="upload-detail-value">Temporary until transcript and summary are complete</div>
+          </div>
+        </div>
+      </section>
+
+      <section className="upload-workflow-panel">
+        <div className="upload-workflow-header">
+          <div>
+            <div className="upload-workflow-eyebrow">Next steps</div>
+            <h2 className="upload-workflow-title">Keep the workflow moving</h2>
+          </div>
+        </div>
+
+        <div className="upload-next-steps">
+          <div className="upload-next-step-copy">
+            {files.audio
+              ? 'Next: continue to transcription from the main workspace area once you have reviewed the audio.'
+              : 'Once your upload is complete, review the audio in the player and continue to transcription from the main workspace area.'}
+          </div>
+          <div className="upload-next-step-note">
+            {files.audio
+              ? 'Download the audio from the player while it is still available if you want to keep a copy.'
+              : 'MP4 uploads are converted automatically, and temporary audio is cleaned up after transcript and summary generation.'}
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
 
 // Recent Transcripts Panel Component
-function RecentTranscriptsPanel() {
-  const [searchQuery, setSearchQuery] = React.useState('');
-  const [recentTranscripts, setRecentTranscripts] = React.useState([
-    {
-      id: 1,
-      filename: 'Q1_Planning_Sync_0314.m4a',
-      duration: '54 min',
-      transcriptType: 'Standard with timestamps',
-      date: '2024-03-14',
-      speakerDiarization: true
-    },
-    {
-      id: 2,
-      filename: 'Client_Retention_Review.wav',
-      duration: '42 min',
-      transcriptType: 'Custom with speaker IDs',
-      date: '2024-03-13',
-      speakerDiarization: true
-    },
-    {
-      id: 3,
-      filename: 'Weekly_Operations_Checkin.mp3',
-      duration: '28 min',
-      transcriptType: 'Standard',
-      date: '2024-03-12',
-      speakerDiarization: false
+function RecentTranscriptsPanel({ historyEntries, historyLoading }) {
+  const handleTranscriptOpen = async (entry) => {
+    try {
+      await openHistoryEntryInNewWindow(entry, 'Transcript is no longer available.');
+    } catch (error) {
+      alert(error.message || 'Transcript is no longer available.');
     }
-  ]);
-
-  const filteredTranscripts = recentTranscripts.filter(transcript => {
-    const query = searchQuery.toLowerCase();
-    return (
-      transcript.filename.toLowerCase().includes(query) ||
-      transcript.transcriptType.toLowerCase().includes(query) ||
-      transcript.date.includes(query)
-    );
-  });
+  };
 
   return (
-    <div className="recent-uploads-panel">
-      <div className="recent-uploads-header">
-        <div className="search-container">
-          <span className="search-icon">🔍</span>
-          <input
-            type="text"
-            className="search-input"
-            placeholder="Search recent transcripts"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-        <div className="recent-uploads-badge">Recent transcripts</div>
-      </div>
-
-      <div className="recent-uploads-list">
-        {filteredTranscripts.map(transcript => (
-          <div key={transcript.id} className="recent-upload-card">
-            <div className="recent-upload-icon">📝</div>
-            <div className="recent-upload-info">
-              <div className="recent-upload-filename">{transcript.filename}</div>
-              <div className="recent-upload-meta">
-                {transcript.duration} • {transcript.transcriptType}
-                {transcript.speakerDiarization && ' • Speaker diarization'}
-              </div>
-            </div>
-            <div className="recent-upload-status">
-              <span className="status-badge status-success">Transcript ✓</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+    <HistoryPanel
+      title="Recent transcripts"
+      placeholder="Search recent transcripts"
+      historyEntries={historyEntries.filter((entry) => entry.file_type === 'transcript')}
+      historyLoading={historyLoading}
+      emptyMessage="No transcripts generated yet."
+      onEntryClick={handleTranscriptOpen}
+    />
   );
 }
 
 // Recent Summaries Panel Component
-function RecentSummariesPanel() {
-  const [searchQuery, setSearchQuery] = React.useState('');
-  const [recentSummaries, setRecentSummaries] = React.useState([
-    {
-      id: 1,
-      filename: 'Q1_Planning_Sync_0314.m4a',
-      summaryType: 'Structured',
-      sections: 'Attendees, Action items, Risks',
-      date: '2024-03-14',
-      actionItems: 8
-    },
-    {
-      id: 2,
-      filename: 'Client_Retention_Review.wav',
-      summaryType: 'Standard',
-      sections: 'Key points only',
-      date: '2024-03-13',
-      actionItems: 5
-    },
-    {
-      id: 3,
-      filename: 'Weekly_Operations_Checkin.mp3',
-      summaryType: 'Structured',
-      sections: 'All sections',
-      date: '2024-03-12',
-      actionItems: 12
+function RecentSummariesPanel({ historyEntries, historyLoading }) {
+  const handleSummaryOpen = async (entry) => {
+    try {
+      await openHistoryEntryInNewWindow(entry, 'Summary is no longer available.');
+    } catch (error) {
+      alert(error.message || 'Summary is no longer available.');
     }
-  ]);
+  };
 
-  const filteredSummaries = recentSummaries.filter(summary => {
+  return (
+    <HistoryPanel
+      title="Recent summaries"
+      placeholder="Search recent summaries"
+      historyEntries={historyEntries.filter((entry) => entry.file_type === 'summary')}
+      historyLoading={historyLoading}
+      emptyMessage="No summaries generated yet."
+      onEntryClick={handleSummaryOpen}
+    />
+  );
+}
+
+function HistoryPanel({ title, placeholder, historyEntries, historyLoading, emptyMessage, onEntryClick }) {
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [dateFilter, setDateFilter] = React.useState('all');
+  const filteredEntries = historyEntries.filter((entry) => {
     const query = searchQuery.toLowerCase();
-    return (
-      summary.filename.toLowerCase().includes(query) ||
-      summary.summaryType.toLowerCase().includes(query) ||
-      summary.sections.toLowerCase().includes(query) ||
-      summary.date.includes(query)
+    const matchesSearch = (
+      entry.displayFilename.toLowerCase().includes(query) ||
+      entry.displayDate.toLowerCase().includes(query) ||
+      entry.fileTypeLabel.toLowerCase().includes(query) ||
+      entry.statusLabel.toLowerCase().includes(query) ||
+      entry.infoChips.join(' ').toLowerCase().includes(query) ||
+      entry.relatedOutputs.join(' ').toLowerCase().includes(query)
     );
+    return matchesSearch && matchesDateFilter(entry.createdAt, dateFilter);
   });
 
   return (
@@ -991,26 +1149,66 @@ function RecentSummariesPanel() {
           <input
             type="text"
             className="search-input"
-            placeholder="Search recent summaries"
+            placeholder={placeholder}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-        <div className="recent-uploads-badge">Recent summaries</div>
+        <select
+          className="history-filter-select"
+          value={dateFilter}
+          onChange={(e) => setDateFilter(e.target.value)}
+        >
+          <option value="all">All dates</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+          <option value="year">This year</option>
+        </select>
+        <div className="recent-uploads-badge">{title}</div>
       </div>
 
       <div className="recent-uploads-list">
-        {filteredSummaries.map(summary => (
-          <div key={summary.id} className="recent-upload-card">
-            <div className="recent-upload-icon">📊</div>
+        {historyLoading ? (
+          <div className="recent-upload-card">
             <div className="recent-upload-info">
-              <div className="recent-upload-filename">{summary.filename}</div>
+              <div className="recent-upload-filename">Loading account history...</div>
+              <div className="recent-upload-meta">Fetching files for your IBM Recap account.</div>
+            </div>
+          </div>
+        ) : filteredEntries.length === 0 ? (
+          <div className="recent-upload-card">
+            <div className="recent-upload-info">
+              <div className="recent-upload-filename">{emptyMessage}</div>
+              <div className="recent-upload-meta">Your future uploads and generated outputs will appear here.</div>
+            </div>
+          </div>
+        ) : filteredEntries.map((entry) => (
+          <div
+            key={entry.id}
+            className={`recent-upload-card ${entry.status}`}
+            role="button"
+            tabIndex={0}
+            onClick={() => onEntryClick?.(entry)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onEntryClick?.(entry);
+              }
+            }}
+          >
+            <div className="recent-upload-icon">{entry.icon}</div>
+            <div className="recent-upload-info">
+              <div className="recent-upload-filename">{entry.displayFilename}</div>
               <div className="recent-upload-meta">
-                {summary.summaryType} • {summary.sections} • {summary.actionItems} action items
+                {entry.fileTypeLabel} • {entry.displayDate} • {entry.statusLabel}
+                {entry.infoChips.length > 0 && ` • ${entry.infoChips.join(' • ')}`}
+                {entry.relatedOutputs.length > 0 && ` • Related outputs: ${entry.relatedOutputs.join(', ')}`}
               </div>
             </div>
             <div className="recent-upload-status">
-              <span className="status-badge status-success">Summary ✓</span>
+              <span className={`status-badge ${entry.status === 'audio' ? 'status-audio' : 'status-success'}`}>
+                {entry.statusLabel}
+              </span>
             </div>
           </div>
         ))}
@@ -1020,7 +1218,7 @@ function RecentSummariesPanel() {
 }
 
 // Transcribe Tab Component
-function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcriptType, setTranscriptType, transcriptOptions, setTranscriptOptions, setBusy, refresh, setActiveTab }) {
+function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcriptType, setTranscriptType, transcriptOptions, setTranscriptOptions, historyEntries, historyLoading, setBusy, refresh, setActiveTab }) {
   const [showOptions, setShowOptions] = useState(false);
 
   const handleTranscribe = () => {
@@ -1287,7 +1485,7 @@ function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcrip
         </div>
         
         <div className="transcribe-right-column">
-          <RecentTranscriptsPanel />
+          <RecentTranscriptsPanel historyEntries={historyEntries} historyLoading={historyLoading} />
         </div>
       </div>
     </div>
@@ -1295,7 +1493,7 @@ function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcrip
 }
 
 // Summarize Tab Component  
-function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType, setSummaryType, structuredSections, setStructuredSections, setBusy, refresh, setActiveTab }) {
+function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType, setSummaryType, structuredSections, setStructuredSections, historyEntries, historyLoading, setBusy, refresh, setActiveTab }) {
   
   const executeSummarization = async () => {
     let customPrompt = '';
@@ -1544,7 +1742,7 @@ function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType,
         </div>
         
         <div className="summarize-right-column">
-          <RecentSummariesPanel />
+          <RecentSummariesPanel historyEntries={historyEntries} historyLoading={historyLoading} />
         </div>
       </div>
     </div>
@@ -1557,6 +1755,153 @@ function RecordTab() {
     <div className="coming-soon-tab">
       <div className="coming-soon-content">
         <span className="coming-soon-badge">Coming soon</span>
+      </div>
+    </div>
+  );
+}
+
+function AccountTab({ accountProfile, storageUsage, accountLoading, onBack, refresh }) {
+  const { user, updateAccount } = useAuth();
+  const [fullName, setFullName] = React.useState(user?.full_name || '');
+  const [saving, setSaving] = React.useState(false);
+  const [message, setMessage] = React.useState('');
+  const [error, setError] = React.useState('');
+
+  React.useEffect(() => {
+    setFullName(accountProfile?.fullName || user?.full_name || '');
+  }, [accountProfile?.fullName, user?.full_name]);
+
+  const handleSave = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setMessage('');
+    setError('');
+
+    try {
+      await updateAccount(fullName);
+      await refresh();
+      setMessage('Account details saved successfully.');
+    } catch (saveError) {
+      setError(saveError.message || 'Failed to save account details');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const usage = storageUsage || {
+    totalBytes: 0,
+    totalFiles: 0,
+    audioCount: 0,
+    transcriptCount: 0,
+    summaryCount: 0,
+    audioBytes: 0,
+    transcriptBytes: 0,
+    summaryBytes: 0,
+    latestActivityAt: null,
+    storageLimitBytes: 50 * 1024 * 1024,
+    remainingBytes: 50 * 1024 * 1024
+  };
+  const storagePercent = usage.storageLimitBytes > 0
+    ? Math.min((usage.totalBytes / usage.storageLimitBytes) * 100, 100)
+    : 0;
+
+  return (
+    <div className="account-page">
+      <div className="account-page-topbar">
+        <button className="account-back-button" onClick={onBack}>
+          ← Back to workspace
+        </button>
+      </div>
+
+      <div className="account-tab">
+      <div className="account-header">
+        <h1 className="tab-title">Account settings</h1>
+        <p className="tab-subtitle">Manage your profile details and monitor storage usage for your IBM Recap workspace.</p>
+      </div>
+
+      <div className="account-grid">
+        <section className="account-panel">
+          <h2 className="account-section-title">Profile</h2>
+          {message && <div className="alert alert-success">{message}</div>}
+          {error && <div className="alert alert-error">{error}</div>}
+
+          <form className="account-form" onSubmit={handleSave}>
+            <div className="form-group">
+              <label htmlFor="accountFullName">Full name</label>
+              <input
+                id="accountFullName"
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Enter your preferred display name"
+                disabled={saving || accountLoading}
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="accountEmail">Email</label>
+              <input
+                id="accountEmail"
+                type="email"
+                value={accountProfile?.email || user?.email || ''}
+                readOnly
+                disabled
+              />
+              <small>Sign-in email is managed through your IBM Recap account.</small>
+            </div>
+
+            <div className="account-meta-grid">
+              <div className="account-meta-card">
+                <div className="account-meta-label">Member since</div>
+                <div className="account-meta-value">{formatDateWithFallback(accountProfile?.createdAt)}</div>
+              </div>
+              <div className="account-meta-card">
+                <div className="account-meta-label">Last sign-in</div>
+                <div className="account-meta-value">{formatDateWithFallback(accountProfile?.lastLogin)}</div>
+              </div>
+            </div>
+
+            <button className="btn-primary-large" type="submit" disabled={saving || accountLoading}>
+              {saving ? 'Saving...' : 'Save account details'}
+            </button>
+          </form>
+        </section>
+
+        <section className="account-panel">
+          <h2 className="account-section-title">Storage usage</h2>
+          <div className="account-storage-summary">
+            <div className="account-storage-total">
+              {formatBytes(usage.totalBytes)} / {formatBytes(usage.storageLimitBytes)}
+            </div>
+            <div className="account-storage-label">{usage.totalFiles} total files stored</div>
+            <div className="account-storage-subtitle">
+              {formatBytes(usage.remainingBytes)} remaining
+              {usage.latestActivityAt ? ` • Latest activity ${getTimeAgo(usage.latestActivityAt)}` : ' • No stored activity yet'}
+            </div>
+            <div className="account-storage-progress">
+              <div className="account-storage-progress-fill" style={{ width: `${storagePercent}%` }} />
+            </div>
+          </div>
+
+          <div className="stats-grid">
+            <div className="stat-card">
+              <div className="stat-label">Audio files</div>
+              <div className="stat-value">{usage.audioCount}</div>
+              <div className="stat-badge">{formatBytes(usage.audioBytes)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Transcripts</div>
+              <div className="stat-value">{usage.transcriptCount}</div>
+              <div className="stat-badge">{formatBytes(usage.transcriptBytes)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Summaries</div>
+              <div className="stat-value">{usage.summaryCount}</div>
+              <div className="stat-badge">{formatBytes(usage.summaryBytes)}</div>
+            </div>
+          </div>
+        </section>
+      </div>
       </div>
     </div>
   );
@@ -1575,6 +1920,7 @@ function AnalyticsTab() {
 
 // Helper function
 function getTimeAgo(isoString) {
+  if (!isoString) return 'just now';
   const now = new Date();
   const past = new Date(isoString);
   const diffMs = now - past;
@@ -1585,6 +1931,223 @@ function getTimeAgo(isoString) {
   if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
   if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
   return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+}
+
+function matchesDateFilter(isoString, filter) {
+  if (!isoString || filter === 'all') return true;
+
+  const date = new Date(isoString);
+  const now = new Date();
+  const diffMs = now - date;
+
+  if (filter === '7d') {
+    return diffMs <= 7 * 24 * 60 * 60 * 1000;
+  }
+
+  if (filter === '30d') {
+    return diffMs <= 30 * 24 * 60 * 60 * 1000;
+  }
+
+  if (filter === 'year') {
+    return date.getFullYear() === now.getFullYear();
+  }
+
+  return true;
+}
+
+async function openHistoryEntryInNewWindow(entry, unavailableMessage) {
+  const previewWindow = window.open('', '_blank');
+  if (!previewWindow) {
+    throw new Error('Your browser blocked the new window. Please allow pop-ups for IBM Recap.');
+  }
+
+  previewWindow.document.write('<title>Opening file...</title><p style="font-family:sans-serif;padding:24px;">Opening file...</p>');
+
+  try {
+    const pdfBlob = await fetchHistoryPdfBlob(entry.id);
+    const pdfObjectUrl = URL.createObjectURL(pdfBlob);
+    previewWindow.location.href = pdfObjectUrl;
+  } catch (error) {
+    previewWindow.close();
+    throw new Error(error.message || unavailableMessage);
+  }
+}
+
+async function fetchHistoryPdfBlob(fileId) {
+  const authToken = localStorage.getItem('auth_token');
+  const headers = authToken
+    ? { Authorization: `Bearer ${authToken}` }
+    : {};
+
+  const response = await fetch(`/api/files/${fileId}/pdf`, { headers });
+  if (!response.ok) {
+    let errorMessage = 'Failed to open the PDF preview.';
+    try {
+      const errorData = await response.json();
+      errorMessage = errorData?.error || errorMessage;
+    } catch (error) {
+      // Fall back to generic message when the response is not JSON.
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.blob();
+}
+
+function buildHistoryEntries(accountFiles) {
+  return (accountFiles || []).map((file) => {
+    const displayFilename = normalizeDisplayFilename(file.original_filename, file.file_type);
+    const createdAt = file.created_at || file.updated_at || new Date().toISOString();
+    const hasTranscript = file.file_type === 'transcript' || file.has_transcript;
+    const hasSummary = file.file_type === 'summary' || file.has_summary;
+    const relatedOutputs = [
+      hasTranscript ? 'Transcript' : null,
+      hasSummary ? 'Summary' : null
+    ].filter(Boolean);
+    const infoChips = [
+      file.speaker_diarization ? 'Speaker diarization' : null,
+      file.action_items_count ? `${file.action_items_count} action items` : null,
+      file.mime_type ? simplifyMimeType(file.mime_type) : null
+    ].filter(Boolean);
+
+    return {
+      ...file,
+      id: file.id,
+      uploadedAt: createdAt,
+      createdAt,
+      displayDate: formatDate(createdAt),
+      displayFilename,
+      fileTypeLabel: formatFileTypeLabel(file.file_type),
+      status: deriveStatus(file),
+      statusLabel: deriveStatusLabel(file),
+      icon: deriveIcon(file.file_type),
+      hasTranscript,
+      hasSummary,
+      infoChips,
+      relatedOutputs
+    };
+  });
+}
+
+function buildGroupedHistory(historyEntries) {
+  const groups = new Map();
+
+  historyEntries.forEach((entry) => {
+    const key = entry.displayFilename.toLowerCase();
+    if (!groups.has(key)) {
+      groups.set(key, {
+        id: `group-${key}`,
+        filename: entry.displayFilename,
+        uploadedAt: entry.uploadedAt,
+        displayDate: entry.displayDate,
+        hasTranscript: false,
+        hasSummary: false,
+        speakerDiarization: false,
+        actionItems: 0,
+        fileTypeLabel: 'Meeting file',
+        status: 'audio',
+        statusLabel: 'Audio only',
+        relatedOutputs: [],
+        infoChips: []
+      });
+    }
+
+    const group = groups.get(key);
+    if (new Date(entry.uploadedAt) > new Date(group.uploadedAt)) {
+      group.uploadedAt = entry.uploadedAt;
+      group.displayDate = entry.displayDate;
+    }
+
+    group.hasTranscript = group.hasTranscript || entry.hasTranscript;
+    group.hasSummary = group.hasSummary || entry.hasSummary;
+    group.speakerDiarization = group.speakerDiarization || !!entry.speaker_diarization;
+    group.actionItems = Math.max(group.actionItems, entry.action_items_count || 0);
+    group.relatedOutputs = Array.from(new Set([...group.relatedOutputs, ...entry.relatedOutputs]));
+  });
+
+  return Array.from(groups.values())
+    .map((group) => {
+      const infoChips = [
+        group.speakerDiarization ? 'Speaker diarization' : null,
+        group.actionItems ? `${group.actionItems} action items` : null
+      ].filter(Boolean);
+
+      if (group.hasSummary) {
+        group.status = 'summary';
+        group.statusLabel = 'Summary ready';
+      } else if (group.hasTranscript) {
+        group.status = 'transcript';
+        group.statusLabel = 'Transcript ready';
+      }
+
+      group.infoChips = infoChips;
+      return group;
+    })
+    .sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+}
+
+function normalizeDisplayFilename(filename, fileType) {
+  if (!filename) return 'Untitled file';
+  if (fileType === 'transcript') {
+    return filename.replace(/\.transcript\.txt$/i, '');
+  }
+  if (fileType === 'summary') {
+    return filename.replace(/\.summary\.md$/i, '');
+  }
+  return filename;
+}
+
+function formatFileTypeLabel(fileType) {
+  if (fileType === 'audio') return 'Uploaded audio';
+  if (fileType === 'transcript') return 'Transcript document';
+  if (fileType === 'summary') return 'Summary document';
+  return 'File';
+}
+
+function deriveStatus(file) {
+  if (file.file_type === 'summary' || file.has_summary) return 'summary';
+  if (file.file_type === 'transcript' || file.has_transcript) return 'transcript';
+  return 'audio';
+}
+
+function deriveStatusLabel(file) {
+  const status = deriveStatus(file);
+  if (status === 'summary') return 'Summary ready';
+  if (status === 'transcript') return 'Transcript ready';
+  return 'Audio only';
+}
+
+function deriveIcon(fileType) {
+  if (fileType === 'summary') return '📊';
+  if (fileType === 'transcript') return '📝';
+  return '🎧';
+}
+
+function simplifyMimeType(mimeType) {
+  if (!mimeType) return null;
+  const [, subtype] = mimeType.split('/');
+  return subtype ? subtype.toUpperCase() : mimeType.toUpperCase();
+}
+
+function formatDate(isoString) {
+  if (!isoString) return 'Unknown date';
+  return new Date(isoString).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  });
+}
+
+function formatDateWithFallback(isoString) {
+  return isoString ? formatDate(isoString) : 'Not available';
+}
+
+function formatBytes(bytes) {
+  const numericBytes = Number(bytes || 0);
+  if (numericBytes < 1024) return `${numericBytes} B`;
+  if (numericBytes < 1024 * 1024) return `${(numericBytes / 1024).toFixed(1)} KB`;
+  if (numericBytes < 1024 * 1024 * 1024) return `${(numericBytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(numericBytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 // App wrapper component - handles authentication routing

@@ -17,7 +17,7 @@ import { authenticate, optionalAuthenticate } from './auth/middleware.js';
 
 // Import Supabase client and storage utilities
 import { supabase } from './auth/supabase.js';
-import { uploadFile, downloadFile, deleteFile } from './storage/supabase-storage.js';
+import { uploadFile, downloadFile, deleteFile, getSignedUrl } from './storage/supabase-storage.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,9 +40,13 @@ const OPENROUTER_SUMMARY_MODEL = process.env.OPENROUTER_SUMMARY_MODEL || 'meta-l
 
 // AssemblyAI configuration (for speaker diarization)
 const ASSEMBLYAI_API_KEY = process.env.ASSEMBLYAI_API_KEY || '';
+const STORAGE_LIMIT_MB = Number(process.env.STORAGE_LIMIT_MB || 50);
+const STORAGE_LIMIT_BYTES = STORAGE_LIMIT_MB * 1024 * 1024;
 
 // Diarization service configuration (local Pyannote - optional)
 const DIARIZATION_URL = process.env.DIARIZATION_URL || 'http://localhost:5000';
+const MAX_UPLOAD_FILE_SIZE_MB = Number(process.env.MAX_UPLOAD_FILE_SIZE_MB || 500);
+const MAX_UPLOAD_FILE_SIZE_BYTES = MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024;
 
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
@@ -70,19 +74,28 @@ app.use(express.static(PUBLIC_DIR));
 // Configure multer for file uploads
 const upload = multer({
   dest: OUTPUT_DIR,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit
+  limits: { fileSize: MAX_UPLOAD_FILE_SIZE_BYTES },
   fileFilter: (_req, file, cb) => {
-    const allowedMimeTypes = ['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/wav', 'audio/wave'];
-    const allowedExtensions = ['.mp3', '.m4a', '.wav'];
+    const allowedMimeTypes = ['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/wav', 'audio/wave', 'video/mp4'];
+    const allowedExtensions = ['.mp3', '.m4a', '.wav', '.mp4'];
     const fileExtension = file.originalname.toLowerCase().slice(file.originalname.lastIndexOf('.'));
     
     if (allowedMimeTypes.includes(file.mimetype) || allowedExtensions.includes(fileExtension)) {
       cb(null, true);
     } else {
-      cb(new Error('Only MP3, M4A, and WAV audio files are allowed'));
+      cb(new Error('Only MP3, M4A, WAV, and MP4 files are allowed'));
     }
   }
 });
+
+function runUploadMiddleware(req, res) {
+  return new Promise((resolve, reject) => {
+    upload.single('audio')(req, res, (err) => {
+      if (err) return reject(err);
+      resolve();
+    });
+  });
+}
 
 // Initialize OpenAI client (primary)
 const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
@@ -161,6 +174,16 @@ function writeMeta(metaPatch) {
   return next;
 }
 
+function getSourceFilenameFromMeta(meta, fallbackPath) {
+  if (meta?.originalFilename) return meta.originalFilename;
+  if (fallbackPath) {
+    return path.basename(fallbackPath)
+      .replace(/\.transcript\.txt$/i, '')
+      .replace(/\.summary\.md$/i, '');
+  }
+  return null;
+}
+
 function runProcess(command, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const p = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts });
@@ -175,6 +198,93 @@ function runProcess(command, args, opts = {}) {
       return reject(new Error(`${command} exited with code ${code}${details ? `\n${details}` : ''}`));
     });
   });
+}
+
+async function getUserStorageUsageBytes(userId) {
+  const { data: files, error } = await supabase
+    .from('files')
+    .select('file_size, file_type')
+    .eq('user_id', userId);
+
+  if (error) {
+    throw error;
+  }
+
+  return (files || []).reduce((total, file) => {
+    if (file.file_type === 'audio') {
+      return total;
+    }
+    return total + Number(file.file_size || 0);
+  }, 0);
+}
+
+function formatBytes(bytes) {
+  const numericBytes = Number(bytes || 0);
+  if (numericBytes < 1024) return `${numericBytes} B`;
+  if (numericBytes < 1024 * 1024) return `${(numericBytes / 1024).toFixed(1)} KB`;
+  if (numericBytes < 1024 * 1024 * 1024) return `${(numericBytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(numericBytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+async function convertMp4ToMp3(inputPath, outputPath) {
+  await runProcess('ffmpeg', [
+    '-y',
+    '-i', inputPath,
+    '-vn',
+    '-acodec', 'libmp3lame',
+    '-b:a', '128k',
+    outputPath,
+  ]);
+}
+
+async function cleanupTemporaryAudio(userId, meta) {
+  const audioPath = meta?.audioPath;
+  const originalFilename = meta?.originalFilename;
+
+  if (audioPath && fs.existsSync(audioPath)) {
+    fs.unlinkSync(audioPath);
+  }
+
+  if (userId === 'anonymous' || !originalFilename) {
+    return;
+  }
+
+  try {
+    const { data: audioFile, error } = await supabase
+      .from('files')
+      .select('id, storage_path')
+      .eq('user_id', userId)
+      .eq('file_type', 'audio')
+      .eq('original_filename', originalFilename)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    if (audioFile?.storage_path) {
+      try {
+        await deleteFile('audio-files', audioFile.storage_path);
+      } catch (storageDeleteError) {
+        console.error('⚠️ Failed to delete temporary audio from Supabase storage:', storageDeleteError);
+      }
+    }
+
+    if (audioFile?.id) {
+      const { error: deleteDbError } = await supabase
+        .from('files')
+        .delete()
+        .eq('id', audioFile.id);
+
+      if (deleteDbError) {
+        throw deleteDbError;
+      }
+    }
+  } catch (cleanupError) {
+    console.error('⚠️ Temporary audio cleanup failed:', cleanupError);
+  }
 }
 
 // Helper function to call diarization service
@@ -486,8 +596,10 @@ app.get('/api/jobs/:id', (req, res) => {
 });
 
 // Upload audio file endpoint
-app.post('/api/upload-audio', optionalAuthenticate, upload.single('audio'), async (req, res) => {
+app.post('/api/upload-audio', optionalAuthenticate, async (req, res) => {
   try {
+    await runUploadMiddleware(req, res);
+
     if (!req.file) {
       return res.status(400).json({ ok: false, error: 'No file uploaded' });
     }
@@ -495,13 +607,35 @@ app.post('/api/upload-audio', optionalAuthenticate, upload.single('audio'), asyn
     const userId = req.user?.id || 'anonymous';
     const ts = stamp();
     const originalFilename = req.file.originalname;
-    // Preserve original file extension
     const originalExtension = path.extname(originalFilename).toLowerCase();
-    const finalPath = path.join(OUTPUT_DIR, `teams-call-${ts}${originalExtension}`);
-    
-    // Rename uploaded file to proper name with original extension
-    fs.renameSync(req.file.path, finalPath);
-    
+    const isMp4Upload = originalExtension === '.mp4' || req.file.mimetype === 'video/mp4';
+    const finalExtension = isMp4Upload ? '.mp3' : originalExtension;
+    const finalPath = path.join(OUTPUT_DIR, `teams-call-${ts}${finalExtension}`);
+
+    try {
+      if (isMp4Upload) {
+        await convertMp4ToMp3(req.file.path, finalPath);
+        fs.unlinkSync(req.file.path);
+      } else {
+        fs.renameSync(req.file.path, finalPath);
+      }
+    } catch (conversionError) {
+      console.error('⚠️ Failed to process uploaded media:', conversionError);
+      if (req.file.path && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      if (fs.existsSync(finalPath)) {
+        fs.unlinkSync(finalPath);
+      }
+      return res.status(500).json({
+        ok: false,
+        error: isMp4Upload
+          ? 'Failed to convert MP4 to MP3. Please try another recording.'
+          : 'Failed to process uploaded audio file.',
+        code: isMp4Upload ? 'MEDIA_CONVERSION_FAILED' : 'UPLOAD_PROCESSING_FAILED'
+      });
+    }
+
     // Upload to Supabase storage
     try {
       const uploadResult = await uploadFile(userId, 'audio-files', finalPath, originalFilename);
@@ -519,7 +653,11 @@ app.post('/api/upload-audio', optionalAuthenticate, upload.single('audio'), asyn
               file_type: 'audio',
               storage_path: uploadResult.path,
               file_size: fileStats.size,
-              mime_type: mime.lookup(originalFilename) || 'audio/mpeg'
+              mime_type: isMp4Upload ? 'audio/mpeg' : (mime.lookup(originalFilename) || 'audio/mpeg'),
+              has_transcript: false,
+              has_summary: false,
+              speaker_diarization: false,
+              action_items_count: 0
             });
           console.log('✅ Audio file metadata saved to database');
         } catch (dbError) {
@@ -541,11 +679,35 @@ app.post('/api/upload-audio', optionalAuthenticate, upload.single('audio'), asyn
     
     return res.json({
       ok: true,
-      message: 'File uploaded successfully',
+      message: isMp4Upload ? 'MP4 uploaded and converted to MP3 successfully' : 'File uploaded successfully',
       audioPath: finalPath,
       originalFilename: originalFilename
     });
   } catch (err) {
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({
+          ok: false,
+          error: `File too large. Uploads are limited to ${MAX_UPLOAD_FILE_SIZE_MB} MB before conversion.`,
+          code: 'UPLOAD_FILE_TOO_LARGE',
+          limits: {
+            maxUploadBytes: MAX_UPLOAD_FILE_SIZE_BYTES,
+            maxUploadMb: MAX_UPLOAD_FILE_SIZE_MB
+          }
+        });
+      }
+
+      return res.status(400).json({
+        ok: false,
+        error: err.message,
+        code: err.code || 'UPLOAD_FAILED'
+      });
+    }
+
     return res.status(500).json({ ok: false, error: String(err.message || err) });
   }
 });
@@ -636,7 +798,7 @@ app.post('/api/transcribe', optionalAuthenticate, async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Audio file not found. Record a call first.' });
     }
 
-    const transcriptPath = audioPath.replace(/\.(m4a|mp3)$/i, '.transcript.txt');
+    const transcriptPath = audioPath.replace(/\.(m4a|mp3|wav)$/i, '.transcript.txt');
     const job = createJob('transcribe');
 
     (async () => {
@@ -950,17 +1112,34 @@ app.post('/api/transcribe', optionalAuthenticate, async (req, res) => {
           // Track file in database
           if (userId !== 'anonymous') {
             try {
+              const meta = readMeta();
+              const sourceFilename = getSourceFilenameFromMeta(meta, transcriptPath);
               const fileStats = fs.statSync(transcriptPath);
               await supabase
                 .from('files')
                 .insert({
                   user_id: userId,
-                  original_filename: path.basename(transcriptPath),
+                  original_filename: sourceFilename || path.basename(transcriptPath),
                   file_type: 'transcript',
                   storage_path: uploadResult.path,
                   file_size: fileStats.size,
-                  mime_type: 'text/plain'
+                  mime_type: 'text/plain',
+                  has_transcript: true,
+                  has_summary: false,
+                  speaker_diarization: !!transcriptOptions.speakerDiarization
                 });
+
+              if (sourceFilename) {
+                await supabase
+                  .from('files')
+                  .update({
+                    has_transcript: true,
+                    speaker_diarization: !!transcriptOptions.speakerDiarization
+                  })
+                  .eq('user_id', userId)
+                  .eq('file_type', 'audio')
+                  .eq('original_filename', sourceFilename);
+              }
               console.log('✅ Transcript metadata saved to database');
             } catch (dbError) {
               console.error('⚠️ Failed to save transcript metadata to database:', dbError);
@@ -1105,17 +1284,35 @@ Rules:
           // Track file in database
           if (userId !== 'anonymous') {
             try {
+              const meta = readMeta();
+              const sourceFilename = getSourceFilenameFromMeta(meta, summaryPath);
               const fileStats = fs.statSync(summaryPath);
+              const actionItemsCount = (summary.match(/## Action items[\s\S]*?(?=##|$)/i)?.[0]?.match(/^[\s]*-/gm) || []).length;
               await supabase
                 .from('files')
                 .insert({
                   user_id: userId,
-                  original_filename: path.basename(summaryPath),
+                  original_filename: sourceFilename || path.basename(summaryPath),
                   file_type: 'summary',
                   storage_path: uploadResult.path,
                   file_size: fileStats.size,
-                  mime_type: 'text/plain'
+                  mime_type: 'text/plain',
+                  has_transcript: true,
+                  has_summary: true,
+                  action_items_count: actionItemsCount
                 });
+
+              if (sourceFilename) {
+                await supabase
+                  .from('files')
+                  .update({
+                    has_summary: true,
+                    action_items_count: actionItemsCount
+                  })
+                  .eq('user_id', userId)
+                  .in('file_type', ['audio', 'transcript'])
+                  .eq('original_filename', sourceFilename);
+              }
               console.log('✅ Summary metadata saved to database');
             } catch (dbError) {
               console.error('⚠️ Failed to save summary metadata to database:', dbError);
@@ -1213,7 +1410,13 @@ Rules:
         
         summaryPdfDoc.end();
         await new Promise((resolve) => summaryPdfStream.on('finish', resolve));
-        writeMeta({ summaryPath });
+        const currentMeta = readMeta();
+        writeMeta({
+          audioPath: null,
+          originalFilename: null,
+          summaryPath
+        });
+        await cleanupTemporaryAudio(userId, currentMeta);
 
         updateJob(job.id, {
           status: 'done',
@@ -1260,6 +1463,117 @@ app.get('/api/files', authenticate, async (req, res) => {
   } catch (err) {
     console.error('Error in /api/files:', err);
     res.status(500).json({ ok: false, error: String(err.message || err) });
+  }
+});
+
+app.get('/api/files/:id/url', authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const { data: file, error } = await supabase
+      .from('files')
+      .select('id, file_type, storage_path, original_filename')
+      .eq('id', req.params.id)
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !file) {
+      return res.status(404).json({ ok: false, error: 'File not found' });
+    }
+
+    const bucketByType = {
+      audio: 'audio-files',
+      transcript: 'transcripts',
+      summary: 'summaries'
+    };
+
+    const bucket = bucketByType[file.file_type];
+    if (!bucket || !file.storage_path) {
+      return res.status(400).json({ ok: false, error: 'File is not available for access' });
+    }
+
+    const signedUrl = await getSignedUrl(bucket, file.storage_path, 3600);
+    return res.json({
+      ok: true,
+      url: signedUrl,
+      fileType: file.file_type,
+      filename: file.original_filename
+    });
+  } catch (error) {
+    console.error('Error generating file URL:', error);
+    return res.status(500).json({ ok: false, error: 'Failed to generate file URL' });
+  }
+});
+
+app.get('/api/files/:id/pdf', authenticate, async (req, res) => {
+  let sourcePath = null;
+  let pdfPath = null;
+
+  const cleanup = () => {
+    [sourcePath, pdfPath].forEach((filePath) => {
+      if (filePath && fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (cleanupError) {
+          console.error('Failed to clean up temporary PDF artifact:', cleanupError);
+        }
+      }
+    });
+  };
+
+  try {
+    const userId = req.user.id;
+
+    const { data: file, error } = await supabase
+      .from('files')
+      .select('id, file_type, storage_path, original_filename')
+      .eq('id', req.params.id)
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !file) {
+      return res.status(404).json({ ok: false, error: 'File not found' });
+    }
+
+    if (!['transcript', 'summary'].includes(file.file_type) || !file.storage_path) {
+      return res.status(400).json({ ok: false, error: 'PDF preview is only available for transcripts and summaries.' });
+    }
+
+    const isTranscript = file.file_type === 'transcript';
+    const bucket = isTranscript ? 'transcripts' : 'summaries';
+    const sourceExt = isTranscript ? '.txt' : '.md';
+    const tempBaseName = `preview-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    sourcePath = path.join(OUTPUT_DIR, `${tempBaseName}${sourceExt}`);
+    pdfPath = path.join(OUTPUT_DIR, `${tempBaseName}.pdf`);
+
+    await downloadFile(bucket, file.storage_path, sourcePath);
+    const sourceContent = fs.readFileSync(sourcePath, 'utf8');
+
+    if (isTranscript) {
+      await generateTranscriptPdf(sourceContent, pdfPath);
+    } else {
+      await generateSummaryPdf(sourceContent, pdfPath);
+    }
+
+    const pdfFilename = buildPdfFilename(file.original_filename, file.file_type);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${pdfFilename}"`);
+
+    const stream = fs.createReadStream(pdfPath);
+    stream.on('close', cleanup);
+    stream.on('error', (streamError) => {
+      console.error('Error streaming generated PDF:', streamError);
+      cleanup();
+      if (!res.headersSent) {
+        res.status(500).json({ ok: false, error: 'Failed to stream generated PDF' });
+      }
+    });
+    res.on('close', cleanup);
+    stream.pipe(res);
+  } catch (error) {
+    cleanup();
+    console.error('Error generating PDF preview:', error);
+    return res.status(500).json({ ok: false, error: 'Failed to generate PDF preview' });
   }
 });
 
@@ -1328,3 +1642,148 @@ app.get('*', (_req, res) => {
 app.listen(PORT, () => {
   console.log(`TeamsCallSummarizer running at http://localhost:${PORT}`);
 });
+
+function buildPdfFilename(originalFilename, fileType) {
+  const fallbackBase = fileType === 'transcript' ? 'transcript' : 'summary';
+  const rawName = originalFilename || fallbackBase;
+  const ext = path.extname(rawName);
+  const baseName = ext ? path.basename(rawName, ext) : rawName;
+  const suffix = fileType === 'transcript' ? '.transcript.pdf' : '.summary.pdf';
+  return `${baseName}${suffix}`;
+}
+
+async function generateTranscriptPdf(transcript, outputPath) {
+  const pdfDoc = new PDFDocument();
+  const pdfStream = fs.createWriteStream(outputPath);
+  pdfDoc.pipe(pdfStream);
+
+  pdfDoc.fontSize(24).font('Helvetica-Bold').text('IBM Recap', { align: 'center' });
+  pdfDoc.moveDown();
+  pdfDoc.fontSize(16).font('Helvetica').text('Meeting Transcript', { align: 'center' });
+  pdfDoc.moveDown();
+  pdfDoc.fontSize(10).text(`Generated: ${new Date().toLocaleString()}`, { align: 'center' });
+  pdfDoc.moveDown(2);
+
+  const lines = transcript.split('\n');
+  pdfDoc.fontSize(11);
+  let lastSpeaker = null;
+
+  for (const line of lines) {
+    if (line.trim() === '') {
+      pdfDoc.moveDown(0.5);
+      lastSpeaker = null;
+      continue;
+    }
+
+    if (line.startsWith('# ')) {
+      pdfDoc.fontSize(14).font('Helvetica-Bold').text(line.replace(/^#\s*/, ''), { continued: false });
+      pdfDoc.moveDown(0.5);
+      pdfDoc.fontSize(11).font('Helvetica');
+      lastSpeaker = null;
+      continue;
+    }
+
+    const timestampMatch = line.match(/^(\[\d{2}:\d{2}:\d{2}\])\s*/);
+    const speakerMatch = line.match(/^(Speaker [A-Z]):\s*(.*)$/);
+    const timestamp = timestampMatch ? timestampMatch[1] + ' ' : '';
+    const lineWithoutTimestamp = timestampMatch ? line.replace(/^\[\d{2}:\d{2}:\d{2}\]\s*/, '') : line;
+    const speakerMatchWithoutTimestamp = lineWithoutTimestamp.match(/^(Speaker [A-Z]):\s*(.*)$/);
+
+    if (speakerMatchWithoutTimestamp) {
+      const speaker = speakerMatchWithoutTimestamp[1];
+      const text = speakerMatchWithoutTimestamp[2];
+
+      if (lastSpeaker && lastSpeaker !== speaker) {
+        pdfDoc.moveDown(1);
+      }
+
+      if (timestamp) {
+        pdfDoc.font('Helvetica').text(timestamp, { continued: true });
+      }
+
+      pdfDoc.font('Helvetica-Bold').text(`${speaker} `, { continued: true });
+      pdfDoc.font('Helvetica').text(text, { continued: false });
+      lastSpeaker = speaker;
+      continue;
+    }
+
+    pdfDoc.font('Helvetica').text(line, { continued: false });
+    lastSpeaker = null;
+  }
+
+  pdfDoc.end();
+  await new Promise((resolve) => pdfStream.on('finish', resolve));
+}
+
+async function generateSummaryPdf(summary, outputPath) {
+  const pdfDoc = new PDFDocument();
+  const pdfStream = fs.createWriteStream(outputPath);
+  pdfDoc.pipe(pdfStream);
+
+  pdfDoc.fontSize(24).font('Helvetica-Bold').text('IBM Recap', { align: 'center' });
+  pdfDoc.moveDown();
+  pdfDoc.fontSize(16).font('Helvetica').text('Meeting Summary', { align: 'center' });
+  pdfDoc.moveDown();
+  pdfDoc.fontSize(10).text(`Generated: ${new Date().toLocaleString()}`, { align: 'center' });
+  pdfDoc.moveDown(2);
+
+  const summaryLines = summary.split('\n');
+  pdfDoc.fontSize(11).font('Helvetica');
+
+  for (const line of summaryLines) {
+    if (line.startsWith('## ')) {
+      pdfDoc.moveDown(0.5);
+      pdfDoc.fontSize(14).font('Helvetica-Bold').text(line.replace(/^##\s*/, ''));
+      pdfDoc.moveDown(0.3);
+      pdfDoc.fontSize(11).font('Helvetica');
+    } else if (line.startsWith('# ')) {
+      pdfDoc.moveDown(0.5);
+      pdfDoc.fontSize(16).font('Helvetica-Bold').text(line.replace(/^#\s*/, ''));
+      pdfDoc.moveDown(0.3);
+      pdfDoc.fontSize(11).font('Helvetica');
+    } else if (line.trim().startsWith('**') && line.trim().endsWith('**')) {
+      const headerText = line.trim().slice(2, -2);
+      pdfDoc.moveDown(0.5);
+      pdfDoc.fontSize(12).font('Helvetica-Bold').text(headerText);
+      pdfDoc.moveDown(0.2);
+      pdfDoc.fontSize(11).font('Helvetica');
+    } else if (line.trim().startsWith('- ')) {
+      const bulletText = line.trim().substring(2);
+      const boldPattern = /\*\*([^*]+)\*\*/g;
+      const parts = [];
+      let lastIndex = 0;
+      let match;
+
+      while ((match = boldPattern.exec(bulletText)) !== null) {
+        if (match.index > lastIndex) {
+          parts.push({ text: bulletText.substring(lastIndex, match.index), bold: false });
+        }
+        parts.push({ text: match[1], bold: true });
+        lastIndex = match.index + match[0].length;
+      }
+
+      if (lastIndex < bulletText.length) {
+        parts.push({ text: bulletText.substring(lastIndex), bold: false });
+      }
+
+      if (parts.length === 0) {
+        pdfDoc.text(`  • ${bulletText}`, { indent: 20 });
+      } else {
+        pdfDoc.text('  • ', { continued: true, indent: 20 });
+        parts.forEach((part, index) => {
+          pdfDoc
+            .font(part.bold ? 'Helvetica-Bold' : 'Helvetica')
+            .text(part.text, { continued: index < parts.length - 1 });
+        });
+        pdfDoc.font('Helvetica');
+      }
+    } else if (line.trim()) {
+      pdfDoc.text(line.replace(/\*\*/g, ''));
+    } else {
+      pdfDoc.moveDown(0.3);
+    }
+  }
+
+  pdfDoc.end();
+  await new Promise((resolve) => pdfStream.on('finish', resolve));
+}

@@ -2,6 +2,17 @@ const { createContext, useContext, useState, useEffect } = React;
 
 const AuthContext = createContext(null);
 
+function normalizeUser(user) {
+  if (!user) return null;
+  const fullName = user.full_name ?? user.fullName ?? null;
+
+  return {
+    ...user,
+    full_name: fullName,
+    fullName
+  };
+}
+
 function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -26,7 +37,7 @@ function AuthProvider({ children }) {
       
       if (response.ok) {
         const data = await response.json();
-        setUser(data.user);
+        setUser(normalizeUser(data.user));
       } else {
         // Token invalid, clear it
         logout();
@@ -54,6 +65,24 @@ function AuthProvider({ children }) {
     
     return data;
   }
+
+  async function verifyCode(email, code) {
+    const response = await fetch('/api/auth/verify-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, code })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      const error = new Error(data.error || 'Verification failed');
+      error.code = data.code;
+      throw error;
+    }
+
+    return data;
+  }
   
   async function login(email, password) {
     const response = await fetch('/api/auth/login', {
@@ -65,13 +94,15 @@ function AuthProvider({ children }) {
     const data = await response.json();
     
     if (!response.ok) {
-      throw new Error(data.error || 'Login failed');
+      const error = new Error(data.error || 'Login failed');
+      error.code = data.code;
+      throw error;
     }
     
     // Save token
     localStorage.setItem('auth_token', data.token);
     setToken(data.token);
-    setUser(data.user);
+    setUser(normalizeUser(data.user));
     
     return data;
   }
@@ -142,17 +173,69 @@ function AuthProvider({ children }) {
     
     return data;
   }
+
+  async function refreshUser() {
+    if (!token) return null;
+    try {
+      const response = await fetch('/api/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to refresh user');
+      }
+      const normalizedUser = normalizeUser(data.user);
+      setUser(normalizedUser);
+      return normalizedUser;
+    } catch (error) {
+      console.error('Refresh user error:', error);
+      throw error;
+    }
+  }
+
+  async function updateAccount(fullName) {
+    if (!token) {
+      throw new Error('Authentication required');
+    }
+
+    const response = await fetch('/api/auth/account', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ fullName })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to update account');
+    }
+
+    const normalizedUser = normalizeUser(data.user);
+    setUser(normalizedUser);
+    return {
+      ...data,
+      user: normalizedUser
+    };
+  }
   
   const value = {
     user,
     loading,
     token,
     register,
+    verifyCode,
     login,
     logout,
     forgotPassword,
     resetPassword,
     resendVerification,
+    refreshUser,
+    updateAccount,
     isAuthenticated: !!user
   };
   

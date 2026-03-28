@@ -1,7 +1,7 @@
 const { useState } = React;
 
 function AuthPage() {
-  const { login, register, forgotPassword, resendVerification } = useAuth();
+  const { login, register, verifyCode, forgotPassword, resendVerification } = useAuth();
   const [mode, setMode] = useState('login'); // 'login', 'signup', 'forgot', 'verify'
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -12,7 +12,8 @@ function AuthPage() {
     email: '',
     password: '',
     confirmPassword: '',
-    fullName: ''
+    fullName: '',
+    verificationCode: ''
   });
   
   function handleChange(e) {
@@ -32,6 +33,10 @@ function AuthPage() {
       await login(formData.email, formData.password);
       // User will be redirected to main app automatically
     } catch (err) {
+      if (err.code === 'EMAIL_NOT_VERIFIED') {
+        setMode('verify');
+        setSuccess('Check your email for the 6-digit code or use the verification link to finish activating your account.');
+      }
       setError(err.message);
     } finally {
       setLoading(false);
@@ -53,12 +58,38 @@ function AuthPage() {
     
     try {
       const result = await register(formData.email, formData.password, formData.fullName);
+      setFormData((current) => ({
+        ...current,
+        email: result.email || current.email,
+        verificationCode: ''
+      }));
+      setMode('verify');
       setSuccess(result.message);
-      // Switch to login mode after 2 seconds
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleVerifyCode(e) {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+    setLoading(true);
+
+    try {
+      const result = await verifyCode(formData.email, formData.verificationCode);
+      setSuccess(result.message);
       setTimeout(() => {
         setMode('login');
-        setSuccess('');
-      }, 2000);
+        setFormData((current) => ({
+          ...current,
+          verificationCode: '',
+          password: '',
+          confirmPassword: ''
+        }));
+      }, 1500);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -159,7 +190,7 @@ function AuthPage() {
                       name="email"
                       value={formData.email}
                       onChange={handleChange}
-                      placeholder="your.name@ibm.com"
+                      placeholder="your.name@ibm.com or your.name@us.ibm.com"
                       required
                       disabled={loading}
                       autoFocus
@@ -242,11 +273,11 @@ function AuthPage() {
                       name="email"
                       value={formData.email}
                       onChange={handleChange}
-                      placeholder="your.name@ibm.com"
+                      placeholder="your.name@ibm.com or your.name@us.ibm.com"
                       required
                       disabled={loading}
                     />
-                    <small>Only IBM email addresses (@ibm.com) are allowed</small>
+                    <small>Supported email domains: @ibm.com and @us.ibm.com</small>
                   </div>
                   
                   <div className="form-group">
@@ -315,7 +346,7 @@ function AuthPage() {
                       name="email"
                       value={formData.email}
                       onChange={handleChange}
-                      placeholder="your.name@ibm.com"
+                      placeholder="your.name@ibm.com or your.name@us.ibm.com"
                       required
                       disabled={loading}
                       autoFocus
@@ -345,19 +376,46 @@ function AuthPage() {
             {mode === 'verify' && (
               <div className="auth-form">
                 <div className="auth-success-icon">📧</div>
-                <h2>Check your email</h2>
+                <h2>Verify your email</h2>
                 <p className="auth-subtitle">
-                  We've sent a verification link to <strong>{formData.email}</strong>
+                  We sent a verification email to <strong>{formData.email}</strong> with a 6-digit code and a verification link.
                 </p>
                 
                 {error && <div className="alert alert-error">{error}</div>}
                 {success && <div className="alert alert-success">{success}</div>}
                 
-                <div className="auth-notice">
-                  <p>Click the link in the email to verify your account and complete registration.</p>
-                  <p>The link will expire in 24 hours.</p>
+                <form onSubmit={handleVerifyCode}>
+                  <div className="form-group">
+                    <label htmlFor="verificationCode">Verification Code</label>
+                    <input
+                      type="text"
+                      id="verificationCode"
+                      name="verificationCode"
+                      value={formData.verificationCode}
+                      onChange={handleChange}
+                      placeholder="Enter 6-digit code"
+                      inputMode="numeric"
+                      maxLength="6"
+                      required
+                      disabled={loading}
+                      autoFocus
+                    />
+                    <small>The code and verification link both expire in 24 hours.</small>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="btn btn-primary btn-block"
+                    disabled={loading}
+                  >
+                    {loading ? 'Verifying...' : 'Verify email'}
+                  </button>
+                </form>
+
+                <div className="auth-divider">
+                  <span>Didn't get the code?</span>
                 </div>
-                
+
                 <button
                   className="btn btn-secondary btn-block"
                   onClick={handleResendVerification}
@@ -367,15 +425,15 @@ function AuthPage() {
                 </button>
                 
                 <div className="auth-divider">
-                  <span>Already verified?</span>
+                  <span>Want to use a different email?</span>
                 </div>
                 
                 <button
-                  className="btn btn-primary btn-block"
-                  onClick={() => setMode('login')}
+                  className="btn btn-secondary btn-block"
+                  onClick={() => setMode('signup')}
                   disabled={loading}
                 >
-                  Sign in
+                  Back to sign up
                 </button>
               </div>
             )}

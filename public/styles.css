@@ -743,6 +743,25 @@ body:not(.dark-mode) .search-input {
   background: var(--ibm-gray-60);
 }
 
+.filters-select,
+.history-filter-select {
+  background: var(--ibm-gray-70);
+  color: white;
+  border: none;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+body:not(.dark-mode) .filters-select,
+body:not(.dark-mode) .history-filter-select {
+  background: white;
+  color: var(--ibm-gray-100);
+  border: 1px solid var(--ibm-gray-30);
+}
+
 /* Files Section */
 .files-section {
   display: flex;
@@ -935,7 +954,7 @@ body:not(.dark-mode) .upload-drop-zone h3 {
 
 .upload-tab-content {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.8fr);
   gap: 64px;
   margin-top: 32px;
   width: 100%;
@@ -949,6 +968,201 @@ body:not(.dark-mode) .upload-drop-zone h3 {
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+
+.upload-right-column {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.upload-workflow-panel {
+  background: var(--ibm-gray-90);
+  border: 1px solid var(--ibm-gray-80);
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+body:not(.dark-mode) .upload-workflow-panel {
+  background: white;
+  border-color: var(--ibm-gray-20);
+}
+
+.upload-workflow-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.upload-workflow-eyebrow {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ibm-gray-50);
+  margin-bottom: 6px;
+}
+
+.upload-workflow-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ibm-gray-10);
+  margin: 0;
+}
+
+body:not(.dark-mode) .upload-workflow-title {
+  color: var(--ibm-gray-100);
+}
+
+.upload-workflow-badge {
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.upload-workflow-badge.success {
+  background: rgba(36, 161, 72, 0.14);
+  color: var(--ibm-green);
+}
+
+.upload-workflow-badge.warning {
+  background: rgba(241, 194, 27, 0.14);
+  color: var(--ibm-yellow);
+}
+
+.upload-workflow-badge.neutral {
+  background: rgba(15, 98, 254, 0.12);
+  color: var(--ibm-blue);
+}
+
+.upload-workflow-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.upload-workflow-step {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 14px 0;
+  border-top: 1px solid var(--ibm-gray-80);
+}
+
+.upload-workflow-step:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+body:not(.dark-mode) .upload-workflow-step {
+  border-top-color: var(--ibm-gray-20);
+}
+
+.upload-workflow-step-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ibm-gray-80);
+  color: var(--ibm-gray-20);
+  font-size: 14px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+body:not(.dark-mode) .upload-workflow-step-icon {
+  background: var(--ibm-gray-10);
+  color: var(--ibm-gray-100);
+}
+
+.upload-workflow-step.complete .upload-workflow-step-icon {
+  background: rgba(36, 161, 72, 0.16);
+  color: var(--ibm-green);
+}
+
+.upload-workflow-step-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ibm-gray-10);
+  margin-bottom: 4px;
+}
+
+body:not(.dark-mode) .upload-workflow-step-title {
+  color: var(--ibm-gray-100);
+}
+
+.upload-workflow-step-copy {
+  font-size: 14px;
+  color: var(--ibm-gray-40);
+  line-height: 1.5;
+}
+
+.upload-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.upload-detail-card {
+  background: var(--ibm-gray-80);
+  border: 1px solid var(--ibm-gray-70);
+  border-radius: 10px;
+  padding: 16px;
+  min-width: 0;
+}
+
+body:not(.dark-mode) .upload-detail-card {
+  background: var(--ibm-gray-10);
+  border-color: var(--ibm-gray-20);
+}
+
+.upload-detail-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ibm-gray-50);
+  margin-bottom: 8px;
+}
+
+.upload-detail-value {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ibm-gray-10);
+  line-height: 1.45;
+}
+
+body:not(.dark-mode) .upload-detail-value {
+  color: var(--ibm-gray-100);
+}
+
+.upload-detail-value.break {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.upload-next-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.upload-next-step-copy {
+  font-size: 14px;
+  color: var(--ibm-gray-30);
+  line-height: 1.55;
+}
+
+.upload-next-step-note {
+  font-size: 13px;
+  color: var(--ibm-gray-50);
+  line-height: 1.5;
 }
 
 /* Upload Actions */
@@ -1019,6 +1233,204 @@ body:not(.dark-mode) .upload-drop-zone h3 {
   flex-direction: column;
 }
 
+.account-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.account-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.account-page-topbar {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 24px;
+}
+
+.account-back-button {
+  background: transparent;
+  border: 1px solid var(--ibm-gray-70);
+  color: var(--ibm-gray-20);
+  padding: 10px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+body:not(.dark-mode) .account-back-button {
+  color: var(--ibm-gray-100);
+  border-color: var(--ibm-gray-30);
+  background: white;
+}
+
+.account-grid {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 24px;
+}
+
+.account-panel {
+  background: var(--ibm-gray-90);
+  border: 1px solid var(--ibm-gray-80);
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+body:not(.dark-mode) .account-panel {
+  background: white;
+  border-color: var(--ibm-gray-20);
+}
+
+.account-section-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ibm-gray-10);
+}
+
+body:not(.dark-mode) .account-section-title {
+  color: var(--ibm-gray-100);
+}
+
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.account-form .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.account-form label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ibm-gray-20);
+}
+
+body:not(.dark-mode) .account-form label {
+  color: var(--ibm-gray-100);
+}
+
+.account-form input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--ibm-gray-70);
+  background: var(--ibm-gray-80);
+  color: var(--ibm-gray-10);
+  font-size: 14px;
+}
+
+body:not(.dark-mode) .account-form input {
+  background: white;
+  border-color: var(--ibm-gray-30);
+  color: var(--ibm-gray-100);
+}
+
+.account-form input:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+.account-form small {
+  color: var(--ibm-gray-50);
+  font-size: 12px;
+}
+
+.account-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.account-meta-card {
+  background: var(--ibm-gray-80);
+  border: 1px solid var(--ibm-gray-70);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+body:not(.dark-mode) .account-meta-card {
+  background: var(--ibm-gray-10);
+  border-color: var(--ibm-gray-20);
+}
+
+.account-meta-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ibm-gray-50);
+  margin-bottom: 6px;
+}
+
+.account-meta-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ibm-gray-10);
+}
+
+body:not(.dark-mode) .account-meta-value {
+  color: var(--ibm-gray-100);
+}
+
+.account-storage-summary {
+  background: linear-gradient(135deg, rgba(15, 98, 254, 0.18), rgba(0, 157, 154, 0.14));
+  border: 1px solid rgba(15, 98, 254, 0.24);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.account-storage-total {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--ibm-gray-10);
+}
+
+body:not(.dark-mode) .account-storage-total {
+  color: var(--ibm-gray-100);
+}
+
+.account-storage-label {
+  font-size: 16px;
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+.account-storage-subtitle {
+  margin-top: 8px;
+  color: var(--ibm-gray-40);
+  font-size: 14px;
+}
+
+.account-storage-progress {
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  overflow: hidden;
+  margin-top: 16px;
+}
+
+body:not(.dark-mode) .account-storage-progress {
+  background: rgba(15, 98, 254, 0.12);
+}
+
+.account-storage-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--ibm-blue), var(--ibm-teal));
+}
+
 
 /* Recent Uploads Panel */
 .recent-uploads-panel {
@@ -1041,6 +1453,7 @@ body:not(.dark-mode) .recent-uploads-panel {
   gap: 16px;
   align-items: center;
   margin-bottom: 24px;
+  flex-wrap: wrap;
 }
 
 .search-container {
@@ -1130,6 +1543,12 @@ body:not(.dark-mode) .recent-upload-card {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
+.recent-upload-card:focus-visible {
+  outline: 2px solid var(--ibm-blue);
+  outline-offset: 2px;
+  border-color: var(--ibm-blue);
+}
+
 .recent-upload-card.needs-conversion {
   border-color: var(--ibm-yellow);
   background: rgba(241, 194, 27, 0.05);
@@ -1150,9 +1569,10 @@ body:not(.dark-mode) .recent-upload-card {
   font-weight: 600;
   color: var(--ibm-gray-10);
   margin-bottom: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.4;
 }
 
 body:not(.dark-mode) .recent-upload-filename {
@@ -1192,12 +1612,12 @@ body:not(.dark-mode) .recent-upload-filename {
   background: rgba(241, 194, 27, 0.1);
   color: var(--ibm-yellow);
   border: 1px solid var(--ibm-yellow);
+}
 
 .status-success {
   background: rgba(36, 161, 72, 0.1);
   color: var(--ibm-green);
   border: 1px solid var(--ibm-green);
-}
 }
 
 /* Responsive Design for Upload Tab */
@@ -1205,10 +1625,19 @@ body:not(.dark-mode) .recent-upload-filename {
   .upload-tab-content {
     grid-template-columns: 1fr;
   }
-  
-  .recent-uploads-panel {
-    position: static;
+
+  .upload-detail-grid {
+    grid-template-columns: 1fr;
   }
+  
+  .account-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .account-meta-grid {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* Responsive Design for Transcribe and Summarize Tabs */
 @media (max-width: 1200px) {
@@ -1681,9 +2110,6 @@ body:not(.dark-mode) .recent-upload-filename {
     grid-template-columns: 1fr;
   }
 }
-
-}
-
 
 .upload-success {
   background: rgba(36, 161, 72, 0.1);

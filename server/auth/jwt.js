@@ -45,6 +45,14 @@ export function generateRandomToken() {
 }
 
 /**
+ * Generate a 6-digit verification code for email verification
+ * @returns {string} Six digit verification code
+ */
+export function generateVerificationCode() {
+  return crypto.randomInt(100000, 1000000).toString();
+}
+
+/**
  * Hash token for storage (prevents token theft if database is compromised)
  * @param {string} token - Token to hash
  * @returns {string} Hashed token
