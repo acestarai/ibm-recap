@@ -122,7 +122,11 @@ function AuthPage() {
       const result = await resendVerification(formData.email);
       setSuccess(result.message);
     } catch (err) {
-      setError(err.message);
+      if ((err.code === 'RESEND_COOLDOWN' || err.code === 'RATE_LIMITED') && err.retryAfterSeconds) {
+        setError(`${err.message} Try again in about ${err.retryAfterSeconds} seconds.`);
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }

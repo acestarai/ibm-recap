@@ -20,16 +20,18 @@ function MainApp() {
   const [homeDateFilter, setHomeDateFilter] = useState('all');
   
   const [accountFiles, setAccountFiles] = useState([]);
+  const [accountMeetings, setAccountMeetings] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [accountProfile, setAccountProfile] = useState(null);
   const [storageUsage, setStorageUsage] = useState(null);
   const [accountLoading, setAccountLoading] = useState(true);
+  const [selectedMeetingContext, setSelectedMeetingContext] = useState(null);
   
   // Main app state (from original)
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
   const [stopping, setStopping] = useState(false);
-  const [files, setFiles] = useState({ audio: null, transcript: null, summary: null });
+  const [files, setFiles] = useState({ meetingId: null, audio: null, transcript: null, summary: null });
   const [transcribeJob, setTranscribeJob] = useState(null);
   const [summarizeJob, setSummarizeJob] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -52,6 +54,21 @@ function MainApp() {
     risks: true,
     questions: true
   });
+
+  useEffect(() => {
+    if (!accountProfile) return;
+
+    setTranscriptType(accountProfile.defaultTranscriptType || 'standard');
+    setTranscriptOptions((current) => ({
+      ...current,
+      speakerDiarization: Boolean(accountProfile.defaultSpeakerDiarization)
+    }));
+    setSummaryType(accountProfile.defaultSummaryType || 'standard');
+  }, [
+    accountProfile?.defaultTranscriptType,
+    accountProfile?.defaultSpeakerDiarization,
+    accountProfile?.defaultSummaryType
+  ]);
 
   // Apply dark mode
   useEffect(() => {
@@ -87,6 +104,11 @@ function MainApp() {
       ];
 
       if (token) {
+        requests.push(fetch('/api/meetings', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }));
         requests.push(fetch('/api/files', {
           headers: {
             'Authorization': `Bearer ${token}`
@@ -109,6 +131,7 @@ function MainApp() {
       setStopping(isStopping);
 
       const normalizedFiles = {
+        meetingId: statusJson.files?.meetingId || null,
         audio: statusJson.files?.audio || null,
         originalFilename: statusJson.files?.originalFilename || null,
         transcript: statusJson.files?.transcript || null,
@@ -117,7 +140,18 @@ function MainApp() {
       setFiles(normalizedFiles);
 
       if (token && responses[1]) {
-        const filesResponse = responses[1];
+        const meetingsResponse = responses[1];
+        const meetingsJson = await meetingsResponse.json();
+        if (meetingsResponse.ok && meetingsJson.ok) {
+          setAccountMeetings(meetingsJson.meetings || []);
+        } else {
+          console.error('Failed to load account meetings:', meetingsJson.error);
+          setAccountMeetings([]);
+        }
+      }
+
+      if (token && responses[2]) {
+        const filesResponse = responses[2];
         const filesJson = await filesResponse.json();
         if (filesResponse.ok && filesJson.ok) {
           setAccountFiles(filesJson.files || []);
@@ -127,8 +161,8 @@ function MainApp() {
         }
       }
 
-      if (token && responses[2]) {
-        const accountResponse = responses[2];
+      if (token && responses[3]) {
+        const accountResponse = responses[3];
         const accountJson = await accountResponse.json();
         if (accountResponse.ok) {
           setAccountProfile(accountJson.user || null);
@@ -152,10 +186,11 @@ function MainApp() {
   }, [token]);
 
   const historyEntries = buildHistoryEntries(accountFiles);
-  const groupedHistory = buildGroupedHistory(historyEntries);
+  const meetingEntries = buildMeetingEntries(accountMeetings);
+  const activeMeetingContext = meetingEntries.find((meeting) => meeting.id === files.meetingId) || selectedMeetingContext || null;
 
   // Filter files based on search
-  const filteredFiles = groupedHistory.filter(file => {
+  const filteredMeetings = meetingEntries.filter(file => {
     const query = searchQuery.toLowerCase().trim();
     const searchableFields = [
       file.filename,
@@ -173,11 +208,11 @@ function MainApp() {
   // Tab navigation
   const tabs = [
     { id: 'home', label: 'Home', icon: '🏠' },
+    { id: 'meetings', label: 'Meetings', icon: '📅' },
     { id: 'upload', label: 'Upload', icon: '📤' },
-    { id: 'record', label: 'Record', icon: '🎙️', disabled: true },
     { id: 'transcribe', label: 'Transcribe', icon: '📝' },
     { id: 'summarize', label: 'Summarize', icon: '📊' },
-    { id: 'analytics', label: 'Analytics', icon: '📈', disabled: true }
+    { id: 'analytics', label: 'Ask Recap', icon: '💬', disabled: true }
   ];
 
   // Ref for scrolling to home dashboard
@@ -260,7 +295,7 @@ function MainApp() {
                     Jump to upload flow
                   </button>
                   <button className="hero-btn hero-btn-tertiary" onClick={() => scrollToTab('analytics')}>
-                    Preview analytics
+                    Preview Ask Recap
                   </button>
                 </div>
                 
@@ -320,10 +355,12 @@ function MainApp() {
           setSearchQuery={setSearchQuery}
           homeDateFilter={homeDateFilter}
           setHomeDateFilter={setHomeDateFilter}
-          filteredFiles={filteredFiles}
-          groupedHistory={groupedHistory}
+          filteredMeetings={filteredMeetings}
+          meetingEntries={meetingEntries}
+          historyEntries={historyEntries}
           historyLoading={historyLoading}
           setActiveTab={setActiveTab}
+          refresh={refresh}
           homeDashboardRef={homeDashboardRef}
         />}
         
@@ -333,6 +370,18 @@ function MainApp() {
           setBusy={setBusy}
           refresh={refresh}
           setActiveTab={setActiveTab}
+          meetingEntries={meetingEntries}
+          selectedMeetingContext={selectedMeetingContext}
+          onSelectMeetingContext={setSelectedMeetingContext}
+          clearSelectedMeetingContext={() => setSelectedMeetingContext(null)}
+        />}
+
+        {activeTab === 'meetings' && <MeetingsTab
+          meetingEntries={meetingEntries}
+          historyLoading={historyLoading}
+          setActiveTab={setActiveTab}
+          onSelectMeetingContext={setSelectedMeetingContext}
+          refresh={refresh}
         />}
         
         {activeTab === 'transcribe' && <TranscribeTab
@@ -365,10 +414,9 @@ function MainApp() {
           setBusy={setBusy}
           refresh={refresh}
           setActiveTab={setActiveTab}
+          activeMeetingContext={activeMeetingContext}
         />}
         
-        {activeTab === 'record' && <RecordTab />}
-
         {activeTab === 'account' && <AccountTab
           accountProfile={accountProfile}
           storageUsage={storageUsage}
@@ -384,11 +432,44 @@ function MainApp() {
 }
 
 // Home Tab Component
-function HomeTab({ searchQuery, setSearchQuery, homeDateFilter, setHomeDateFilter, filteredFiles, groupedHistory, historyLoading, setActiveTab, homeDashboardRef }) {
-  const uploadedCount = groupedHistory.length;
-  const pendingTranscriptCount = groupedHistory.filter((file) => file.status === 'audio').length;
-  const summaryCount = groupedHistory.filter((file) => file.hasSummary).length;
-  const recommendedFile = groupedHistory.find((file) => !file.hasTranscript) || groupedHistory[0] || null;
+function HomeTab({ searchQuery, setSearchQuery, homeDateFilter, setHomeDateFilter, filteredMeetings, meetingEntries, historyEntries, historyLoading, setActiveTab, refresh, homeDashboardRef }) {
+  const uploadedCount = meetingEntries.length;
+  const pendingTranscriptCount = meetingEntries.filter((file) => file.processingStatus !== 'completed' && !file.hasTranscript).length;
+  const summaryCount = meetingEntries.filter((file) => file.hasSummary).length;
+  const recommendedFile = meetingEntries.find((file) => !file.hasTranscript) || meetingEntries.find((file) => file.hasTranscript && !file.hasSummary) || meetingEntries[0] || null;
+  const [selectedMeetingId, setSelectedMeetingId] = React.useState(null);
+  const [retryBusy, setRetryBusy] = React.useState(false);
+
+  const selectedMeeting = meetingEntries.find((meeting) => meeting.id === selectedMeetingId) || null;
+  const selectedMeetingArtifacts = historyEntries.filter((entry) => entry.meetingId === selectedMeetingId);
+  const canRestoreTranscription = selectedMeetingArtifacts.some((entry) => entry.file_type === 'audio');
+  const canRestoreSummary = selectedMeetingArtifacts.some((entry) => entry.file_type === 'transcript');
+
+  const handleRetry = async (meeting, stage) => {
+    try {
+      setRetryBusy(true);
+      const authToken = localStorage.getItem('auth_token');
+      const response = await fetch(`/api/meetings/${meeting.id}/retry`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+        },
+        body: JSON.stringify({ stage })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || 'Failed to prepare retry');
+      }
+
+      await refresh();
+      setActiveTab(stage === 'summarize' ? 'summarize' : 'transcribe');
+    } catch (error) {
+      alert(error.message || 'Failed to prepare retry');
+    } finally {
+      setRetryBusy(false);
+    }
+  };
 
   return (
     <div className="home-tab">
@@ -468,8 +549,8 @@ function HomeTab({ searchQuery, setSearchQuery, homeDateFilter, setHomeDateFilte
       </div>
 
       {/* Recent Files */}
-      <div className="files-section">
-        <h2 className="section-title">Recent files</h2>
+        <div className="files-section">
+        <h2 className="section-title">Recent meetings</h2>
         <div className="files-list">
           {historyLoading ? (
             <div className="file-card">
@@ -478,15 +559,27 @@ function HomeTab({ searchQuery, setSearchQuery, homeDateFilter, setHomeDateFilte
                 <div className="file-meta">Fetching uploads, transcripts, and summaries for your account.</div>
               </div>
             </div>
-          ) : filteredFiles.length === 0 ? (
+          ) : filteredMeetings.length === 0 ? (
             <div className="file-card">
               <div className="file-info">
-                <div className="file-name">No matching files found</div>
+                <div className="file-name">No matching meetings found</div>
                 <div className="file-meta">Try a different keyword or upload your first meeting recording.</div>
               </div>
             </div>
-          ) : filteredFiles.map(file => (
-            <div key={file.id} className="file-card">
+          ) : filteredMeetings.map(file => (
+            <div
+              key={file.id}
+              className="file-card clickable"
+              role="button"
+              tabIndex={0}
+              onClick={() => setSelectedMeetingId(file.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  setSelectedMeetingId(file.id);
+                }
+              }}
+            >
               <div className="file-icon">
                 {file.status === 'audio' && '🎧'}
                 {file.status === 'transcript' && '📝'}
@@ -499,23 +592,134 @@ function HomeTab({ searchQuery, setSearchQuery, homeDateFilter, setHomeDateFilte
                   {file.infoChips.length > 0 && ` • ${file.infoChips.join(' • ')}`}
                   {file.relatedOutputs.length > 0 && ` • Related outputs: ${file.relatedOutputs.join(', ')}`}
                 </div>
+                {file.statusNote && (
+                  <div className={`file-card-status-note ${file.statusTone}`}>
+                    {file.statusNote}
+                  </div>
+                )}
               </div>
               <div className="file-status">
-                {file.status === 'audio' && <span className="badge badge-warning">{file.statusLabel}</span>}
-                {(file.status === 'transcript' || file.status === 'summary') && <span className="badge badge-success">{file.statusLabel}</span>}
+                <span className={`badge ${file.statusBadgeClass}`}>{file.statusLabel}</span>
               </div>
             </div>
           ))}
         </div>
       </div>
+
+      {selectedMeeting && (
+        <div className="meeting-detail-panel">
+          <div className="meeting-detail-header">
+            <div>
+              <div className="meeting-detail-eyebrow">Meeting detail</div>
+              <h2 className="meeting-detail-title">{selectedMeeting.filename}</h2>
+              <p className="meeting-detail-copy">
+                Uploaded {getTimeAgo(selectedMeeting.uploadedAt)} ({selectedMeeting.displayDate}) • {selectedMeeting.fileTypeLabel}
+              </p>
+            </div>
+            <button className="meeting-detail-close" onClick={() => setSelectedMeetingId(null)}>
+              Close
+            </button>
+          </div>
+
+          <div className="meeting-detail-grid">
+            <div className="meeting-detail-card">
+              <div className="meeting-detail-label">Processing status</div>
+              <div className="meeting-detail-value">{selectedMeeting.statusLabel}</div>
+            </div>
+            <div className="meeting-detail-card">
+              <div className="meeting-detail-label">Outputs</div>
+              <div className="meeting-detail-value">
+                {selectedMeeting.relatedOutputs.length > 0 ? selectedMeeting.relatedOutputs.join(', ') : 'No outputs yet'}
+              </div>
+            </div>
+          </div>
+
+          {(selectedMeeting.organizerName || selectedMeeting.attendeeSummary || selectedMeeting.notes || selectedMeeting.externalMeetingUrl) && (
+            <div className="meeting-detail-section">
+              <div className="meeting-detail-section-title">Saved meeting context</div>
+              <div className="meeting-detail-artifacts">
+                {selectedMeeting.organizerName && (
+                  <div className="meeting-detail-artifact">
+                    <div className="meeting-detail-artifact-name">Organizer</div>
+                    <div className="meeting-detail-artifact-meta">{selectedMeeting.organizerName}</div>
+                  </div>
+                )}
+                {selectedMeeting.attendeeSummary && (
+                  <div className="meeting-detail-artifact">
+                    <div className="meeting-detail-artifact-name">Attendees</div>
+                    <div className="meeting-detail-artifact-meta">{selectedMeeting.attendeeSummary}</div>
+                  </div>
+                )}
+                {selectedMeeting.notes && (
+                  <div className="meeting-detail-artifact">
+                    <div className="meeting-detail-artifact-name">Notes</div>
+                    <div className="meeting-detail-artifact-meta">{selectedMeeting.notes}</div>
+                  </div>
+                )}
+                {selectedMeeting.externalMeetingUrl && (
+                  <div className="meeting-detail-artifact">
+                    <div className="meeting-detail-artifact-name">Meeting link</div>
+                    <div className="meeting-detail-artifact-meta">{selectedMeeting.externalMeetingUrl}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {selectedMeeting.processingError && (
+            <div className="meeting-detail-error">
+              <div className="meeting-detail-label">Last processing error</div>
+              <div className="meeting-detail-error-copy">{selectedMeeting.processingError}</div>
+            </div>
+          )}
+
+          <div className="meeting-detail-section">
+            <div className="meeting-detail-section-title">Artifacts</div>
+            <div className="meeting-detail-artifacts">
+              {selectedMeetingArtifacts.length === 0 ? (
+                <div className="meeting-detail-artifact-empty">No stored artifacts are linked to this meeting yet.</div>
+              ) : selectedMeetingArtifacts.map((artifact) => (
+                <div key={artifact.id} className="meeting-detail-artifact">
+                  <div className="meeting-detail-artifact-name">{artifact.displayFilename}</div>
+                  <div className="meeting-detail-artifact-meta">
+                    {artifact.fileTypeLabel} • {artifact.statusLabel}
+                    {artifact.infoChips.length > 0 && ` • ${artifact.infoChips.join(' • ')}`}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="meeting-detail-section">
+            <div className="meeting-detail-section-title">Recovery actions</div>
+            <div className="meeting-detail-actions">
+              <button
+                className="btn-secondary-large"
+                disabled={retryBusy || !canRestoreSummary}
+                onClick={() => handleRetry(selectedMeeting, 'summarize')}
+              >
+                {retryBusy ? 'Preparing...' : 'Restore for summary retry'}
+              </button>
+              <button
+                className="btn-primary-large"
+                disabled={retryBusy || !canRestoreTranscription}
+                onClick={() => handleRetry(selectedMeeting, 'transcribe')}
+              >
+                {retryBusy ? 'Preparing...' : 'Restore for transcription retry'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // Upload Tab Component
-function UploadTab({ files, busy, setBusy, refresh, setActiveTab }) {
+function UploadTab({ files, busy, setBusy, refresh, setActiveTab, meetingEntries, selectedMeetingContext, onSelectMeetingContext, clearSelectedMeetingContext }) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadState, setUploadState] = useState(null);
+  const availableManualMeetings = (meetingEntries || []).filter((meeting) => meeting.sourceType === 'manual' && !meeting.archivedAt);
 
   const handleDragEnter = (e) => {
     e.preventDefault();
@@ -563,6 +767,9 @@ function UploadTab({ files, busy, setBusy, refresh, setActiveTab }) {
     
     const formData = new FormData();
     formData.append('audio', file);
+    if (selectedMeetingContext?.id) {
+      formData.append('meetingId', selectedMeetingContext.id);
+    }
     
     try {
       setBusy(true);
@@ -658,6 +865,54 @@ function UploadTab({ files, busy, setBusy, refresh, setActiveTab }) {
       <h1 className="tab-title">Upload audio file</h1>
       <p className="tab-subtitle">Upload meeting recordings in MP3, M4A, WAV, or MP4 format. MP4 videos are converted to MP3 automatically.</p>
 
+      {!selectedMeetingContext && availableManualMeetings.length > 0 && (
+        <div className="upload-meeting-selector">
+          <div className="upload-meeting-selector-copy">
+            <div className="upload-meeting-selector-label">Attach this upload to an existing meeting workspace</div>
+            <div className="upload-meeting-selector-subtitle">
+              If you forgot to start in Meetings, pick a saved manual workspace here so the upload, transcript, and summary stay connected.
+            </div>
+          </div>
+          <select
+            className="filters-select upload-meeting-selector-input"
+            value={selectedMeetingContext?.id || ''}
+            onChange={(event) => {
+              const meeting = availableManualMeetings.find((entry) => entry.id === event.target.value);
+              if (!meeting) return;
+              onSelectMeetingContext({
+                id: meeting.id,
+                title: meeting.filename,
+                start: meeting.meetingStartAt || meeting.uploadedAt,
+                end: meeting.meetingStartAt || meeting.uploadedAt,
+                organizer: meeting.organizerName || 'Organizer not set'
+              });
+            }}
+          >
+            <option value="">Choose a meeting workspace</option>
+            {availableManualMeetings.map((meeting) => (
+              <option key={meeting.id} value={meeting.id}>
+                {meeting.filename} • {formatDateWithFallback(meeting.meetingStartAt || meeting.uploadedAt)}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {selectedMeetingContext && (
+        <div className="upload-meeting-context">
+          <div className="upload-meeting-context-copy">
+            <div className="upload-meeting-context-label">Selected meeting context</div>
+            <div className="upload-meeting-context-title">{selectedMeetingContext.title}</div>
+            <div className="upload-meeting-context-meta">
+              {selectedMeetingContext.organizer} • {formatDateWithFallback(selectedMeetingContext.start)}
+            </div>
+          </div>
+          <button className="account-back-button" onClick={clearSelectedMeetingContext}>
+            Clear
+          </button>
+        </div>
+      )}
+
       <div className="upload-tab-content">
         {/* Left Column - Upload and Player */}
         <div className="upload-left-column">
@@ -713,7 +968,7 @@ function UploadTab({ files, busy, setBusy, refresh, setActiveTab }) {
         <UploadWorkflowPanel
           files={files}
           uploadState={uploadState}
-          setActiveTab={setActiveTab}
+          selectedMeetingContext={selectedMeetingContext}
         />
       </div>
     </div>
@@ -949,7 +1204,7 @@ function UploadActions({ setActiveTab, audioFile, originalFilename, showContinue
   );
 }
 
-function UploadWorkflowPanel({ files, uploadState, setActiveTab }) {
+function UploadWorkflowPanel({ files, uploadState, selectedMeetingContext }) {
   const displayFilename = files.originalFilename || files.audio?.split('/').pop() || 'No file selected';
   const lowerFilename = displayFilename.toLowerCase();
   const fileExtension = displayFilename.includes('.') ? displayFilename.split('.').pop().toUpperCase() : 'Unknown';
@@ -988,6 +1243,12 @@ function UploadWorkflowPanel({ files, uploadState, setActiveTab }) {
           </div>
           <span className={`upload-workflow-badge ${uploadStatusTone}`}>{uploadStatusLabel}</span>
         </div>
+
+        {selectedMeetingContext && (
+          <div className="upload-workflow-callout">
+            Working from Teams meeting: <strong>{selectedMeetingContext.title}</strong>
+          </div>
+        )}
 
         <div className="upload-workflow-steps">
           <div className={`upload-workflow-step ${stepStates.uploaded ? 'complete' : ''}`}>
@@ -1493,7 +1754,7 @@ function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcrip
 }
 
 // Summarize Tab Component  
-function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType, setSummaryType, structuredSections, setStructuredSections, historyEntries, historyLoading, setBusy, refresh, setActiveTab }) {
+function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType, setSummaryType, structuredSections, setStructuredSections, historyEntries, historyLoading, setBusy, refresh, setActiveTab, activeMeetingContext }) {
   
   const executeSummarization = async () => {
     let customPrompt = '';
@@ -1581,6 +1842,59 @@ function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType,
             </div>
             <span className="file-card-badge" style={{background: 'rgba(36, 161, 72, 0.1)', color: 'var(--ibm-green)'}}>Ready for summary</span>
           </div>
+
+          {activeMeetingContext && (
+            <div className="summary-context-panel">
+              <div className="summary-context-header">
+                <div>
+                  <div className="upload-workflow-eyebrow">Saved meeting context</div>
+                  <h3 className="upload-workflow-title">This context will inform the summary</h3>
+                </div>
+              </div>
+
+              <div className="summary-context-grid">
+                <div className="summary-context-card">
+                  <div className="summary-context-label">Meeting</div>
+                  <div className="summary-context-value">{activeMeetingContext.filename}</div>
+                </div>
+                {activeMeetingContext.meetingStartAt && (
+                  <div className="summary-context-card">
+                    <div className="summary-context-label">Meeting date</div>
+                    <div className="summary-context-value">{formatDateWithFallback(activeMeetingContext.meetingStartAt)}</div>
+                  </div>
+                )}
+                {activeMeetingContext.organizerName && (
+                  <div className="summary-context-card">
+                    <div className="summary-context-label">Organizer</div>
+                    <div className="summary-context-value">{activeMeetingContext.organizerName}</div>
+                  </div>
+                )}
+                {activeMeetingContext.attendeeSummary && (
+                  <div className="summary-context-card">
+                    <div className="summary-context-label">Attendees</div>
+                    <div className="summary-context-value">{activeMeetingContext.attendeeSummary}</div>
+                  </div>
+                )}
+              </div>
+
+              {(activeMeetingContext.notes || activeMeetingContext.externalMeetingUrl) && (
+                <div className="summary-context-notes">
+                  {activeMeetingContext.notes && (
+                    <div className="summary-context-note-block">
+                      <div className="summary-context-label">Notes</div>
+                      <div className="summary-context-copy">{activeMeetingContext.notes}</div>
+                    </div>
+                  )}
+                  {activeMeetingContext.externalMeetingUrl && (
+                    <div className="summary-context-note-block">
+                      <div className="summary-context-label">Meeting link</div>
+                      <div className="summary-context-copy">{activeMeetingContext.externalMeetingUrl}</div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Summary Type Options */}
           <div className="transcript-options-grid">
@@ -1724,7 +2038,7 @@ function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType,
                   className="btn-secondary-large"
                   disabled
                 >
-                  Continue to Analytics
+                  Continue to Ask Recap
                 </button>
               </>
             ) : (
@@ -1749,12 +2063,506 @@ function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType,
   );
 }
 
-// Record Tab Component
-function RecordTab() {
+// Meetings Tab Component
+function MeetingsTab({ meetingEntries, historyLoading, setActiveTab, onSelectMeetingContext, refresh }) {
+  const [meetingSearchQuery, setMeetingSearchQuery] = React.useState('');
+  const [meetingDateFilter, setMeetingDateFilter] = React.useState('all');
+  const [meetingStatusFilter, setMeetingStatusFilter] = React.useState('all');
+  const [showArchivedMeetings, setShowArchivedMeetings] = React.useState(false);
+  const [editingMeetingId, setEditingMeetingId] = React.useState(null);
+  const [savingMeeting, setSavingMeeting] = React.useState(false);
+  const [archiveBusyId, setArchiveBusyId] = React.useState(null);
+  const [meetingMessage, setMeetingMessage] = React.useState('');
+  const [meetingError, setMeetingError] = React.useState('');
+  const [meetingForm, setMeetingForm] = React.useState({
+    title: '',
+    meetingStartAt: '',
+    organizerName: '',
+    attendeeSummary: '',
+    externalMeetingUrl: '',
+    notes: ''
+  });
+
+  const resetMeetingForm = React.useCallback(() => {
+    setEditingMeetingId(null);
+    setMeetingForm({
+      title: '',
+      meetingStartAt: '',
+      organizerName: '',
+      attendeeSummary: '',
+      externalMeetingUrl: '',
+      notes: ''
+    });
+  }, []);
+
+  const allMeetings = meetingEntries || [];
+  const filteredManualMeetings = allMeetings.filter((meeting) => {
+    if (meeting.sourceType !== 'manual') return false;
+    if (!showArchivedMeetings && meeting.archivedAt) return false;
+
+    const query = meetingSearchQuery.toLowerCase().trim();
+    const searchText = [
+      meeting.filename,
+      meeting.organizerName,
+      meeting.attendeeSummary,
+      meeting.notes,
+      meeting.displayDate,
+      meeting.statusLabel,
+      meeting.statusNote
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    const matchesSearch = !query || searchText.includes(query);
+    const matchesDate = matchesDateFilter(meeting.meetingStartAt || meeting.uploadedAt, meetingDateFilter);
+    const matchesStatus = doesMeetingMatchStatusFilter(meeting, meetingStatusFilter);
+    return matchesSearch && matchesDate && matchesStatus;
+  });
+  const visibleMeetings = showArchivedMeetings ? allMeetings : allMeetings.filter((meeting) => !meeting.archivedAt);
+  const recentMeetings = visibleMeetings.slice(0, 8);
+
+  const handleMeetingFieldChange = (field, value) => {
+    setMeetingForm((current) => ({
+      ...current,
+      [field]: value
+    }));
+  };
+
+  const handleEditMeeting = (meeting) => {
+    setEditingMeetingId(meeting.id);
+    setMeetingMessage('');
+    setMeetingError('');
+    setMeetingForm({
+      title: meeting.filename || '',
+      meetingStartAt: meeting.meetingStartAt ? toDateTimeLocalValue(meeting.meetingStartAt) : '',
+      organizerName: meeting.organizerName || '',
+      attendeeSummary: meeting.attendeeSummary || '',
+      externalMeetingUrl: meeting.externalMeetingUrl || '',
+      notes: meeting.notes || ''
+    });
+  };
+
+  const handleUseMeeting = (meeting) => {
+    onSelectMeetingContext({
+      id: meeting.id,
+      title: meeting.filename,
+      start: meeting.meetingStartAt || meeting.uploadedAt,
+      end: meeting.meetingStartAt || meeting.uploadedAt,
+      organizer: meeting.organizerName || 'Organizer not set'
+    });
+    setActiveTab('upload');
+  };
+
+  const handleArchiveToggle = async (meeting, action) => {
+    try {
+      setArchiveBusyId(meeting.id);
+      setMeetingMessage('');
+      setMeetingError('');
+      const authToken = localStorage.getItem('auth_token');
+      if (!authToken) {
+        throw new Error('Authentication is required to manage meeting workspaces.');
+      }
+
+      const response = await fetch(`/api/meetings/${meeting.id}/${action}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${authToken}`
+        }
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || `Failed to ${action} meeting workspace.`);
+      }
+
+      await refresh();
+      setMeetingMessage(action === 'archive' ? 'Meeting workspace archived.' : 'Meeting workspace restored.');
+    } catch (error) {
+      setMeetingError(error.message || 'Failed to update meeting workspace.');
+    } finally {
+      setArchiveBusyId(null);
+    }
+  };
+
+  const handleSaveMeeting = async (event) => {
+    event.preventDefault();
+    setSavingMeeting(true);
+    setMeetingMessage('');
+    setMeetingError('');
+
+    const authToken = localStorage.getItem('auth_token');
+    if (!authToken) {
+      setMeetingError('Authentication is required to save meeting workspaces.');
+      setSavingMeeting(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(editingMeetingId ? `/api/meetings/${editingMeetingId}` : '/api/meetings', {
+        method: editingMeetingId ? 'PATCH' : 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify(meetingForm)
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || 'Failed to save meeting workspace.');
+      }
+
+      await refresh();
+      setMeetingMessage(editingMeetingId ? 'Meeting workspace updated.' : 'Meeting workspace created.');
+      resetMeetingForm();
+    } catch (error) {
+      setMeetingError(error.message || 'Failed to save meeting workspace.');
+    } finally {
+      setSavingMeeting(false);
+    }
+  };
+
   return (
-    <div className="coming-soon-tab">
-      <div className="coming-soon-content">
-        <span className="coming-soon-badge">Coming soon</span>
+    <div className="record-tab meetings-tab">
+      <div className="record-header">
+        <div className="record-header-top">
+          <div>
+            <h1 className="tab-title">Meetings</h1>
+            <p className="tab-subtitle">
+              Use this as a manual meeting workspace. Capture the meeting context first, then pass that meeting into
+              Upload, Transcribe, and Summarize when you have the recording or transcript ready.
+            </p>
+          </div>
+          <button className="btn-teams-secondary" onClick={() => setActiveTab('upload')}>
+            Open Upload flow
+          </button>
+        </div>
+      </div>
+
+      <div className="record-tab-content">
+        <div className="record-left-column">
+          <section className="account-panel meetings-compose-panel">
+            <div className="meetings-section-header">
+              <div>
+                <h2 className="account-section-title">Create meeting workspace</h2>
+                <p className="tab-subtitle">Capture the context now, then attach a recording or transcript later.</p>
+              </div>
+              {editingMeetingId && (
+                <button className="account-back-button" onClick={resetMeetingForm}>
+                  Cancel edit
+                </button>
+              )}
+            </div>
+
+            {meetingMessage && <div className="alert alert-success">{meetingMessage}</div>}
+            {meetingError && <div className="alert alert-error">{meetingError}</div>}
+
+            <form className="account-form meetings-form" onSubmit={handleSaveMeeting}>
+              <div className="meetings-form-grid">
+                <div className="form-group">
+                  <label htmlFor="meetingTitle">Meeting title</label>
+                  <input
+                    id="meetingTitle"
+                    type="text"
+                    value={meetingForm.title}
+                    onChange={(e) => handleMeetingFieldChange('title', e.target.value)}
+                    placeholder="Client discovery with Acme"
+                    disabled={savingMeeting}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="meetingStartAt">Meeting date and time</label>
+                  <input
+                    id="meetingStartAt"
+                    type="datetime-local"
+                    value={meetingForm.meetingStartAt}
+                    onChange={(e) => handleMeetingFieldChange('meetingStartAt', e.target.value)}
+                    disabled={savingMeeting}
+                  />
+                </div>
+              </div>
+
+              <div className="meetings-form-grid">
+                <div className="form-group">
+                  <label htmlFor="organizerName">Organizer</label>
+                  <input
+                    id="organizerName"
+                    type="text"
+                    value={meetingForm.organizerName}
+                    onChange={(e) => handleMeetingFieldChange('organizerName', e.target.value)}
+                    placeholder="Meeting owner or host"
+                    disabled={savingMeeting}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="attendeeSummary">Attendees</label>
+                  <input
+                    id="attendeeSummary"
+                    type="text"
+                    value={meetingForm.attendeeSummary}
+                    onChange={(e) => handleMeetingFieldChange('attendeeSummary', e.target.value)}
+                    placeholder="Names or team list"
+                    disabled={savingMeeting}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="externalMeetingUrl">Meeting link</label>
+                <input
+                  id="externalMeetingUrl"
+                  type="url"
+                  value={meetingForm.externalMeetingUrl}
+                  onChange={(e) => handleMeetingFieldChange('externalMeetingUrl', e.target.value)}
+                  placeholder="Optional Teams or meeting URL"
+                  disabled={savingMeeting}
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="meetingNotes">Notes</label>
+                <textarea
+                  id="meetingNotes"
+                  rows="4"
+                  value={meetingForm.notes}
+                  onChange={(e) => handleMeetingFieldChange('notes', e.target.value)}
+                  placeholder="Capture meeting purpose, account context, or anything you want preserved before the recording arrives."
+                  disabled={savingMeeting}
+                />
+              </div>
+
+              <div className="meetings-form-actions">
+                <button className="btn-primary-large" type="submit" disabled={savingMeeting}>
+                  {savingMeeting ? 'Saving...' : editingMeetingId ? 'Update workspace' : 'Create workspace'}
+                </button>
+                <button className="btn-secondary-large" type="button" onClick={resetMeetingForm} disabled={savingMeeting}>
+                  Reset form
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section className="meetings-history-section">
+            <div className="meetings-section-header">
+              <div>
+                <h2 className="section-title">Manual meeting workspaces</h2>
+                <div className="tab-subtitle">Search, filter, archive, and reuse your saved meeting context from here.</div>
+              </div>
+              <span className="recent-uploads-badge">{filteredManualMeetings.length} shown</span>
+            </div>
+
+            <div className="meetings-filter-bar">
+              <div className="search-container meetings-search-container">
+                <span className="search-icon">🔍</span>
+                <input
+                  type="text"
+                  className="search-input"
+                  placeholder="Search by title, organizer, attendees, notes, or date"
+                  value={meetingSearchQuery}
+                  onChange={(e) => setMeetingSearchQuery(e.target.value)}
+                />
+              </div>
+
+              <select
+                className="history-filter-select"
+                value={meetingDateFilter}
+                onChange={(e) => setMeetingDateFilter(e.target.value)}
+              >
+                <option value="all">All dates</option>
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+                <option value="year">This year</option>
+              </select>
+
+              <select
+                className="history-filter-select"
+                value={meetingStatusFilter}
+                onChange={(e) => setMeetingStatusFilter(e.target.value)}
+              >
+                <option value="all">All statuses</option>
+                <option value="workspace_ready">Workspace ready</option>
+                <option value="in_progress">In progress</option>
+                <option value="transcript_ready">Transcript ready</option>
+                <option value="completed">Summary ready</option>
+                <option value="failed">Failed</option>
+              </select>
+
+              <label className="meetings-archive-toggle">
+                <input
+                  type="checkbox"
+                  checked={showArchivedMeetings}
+                  onChange={(e) => setShowArchivedMeetings(e.target.checked)}
+                />
+                Show archived
+              </label>
+            </div>
+
+            <div className="files-list">
+              {historyLoading ? (
+                <div className="file-card">
+                  <div className="file-info">
+                    <div className="file-name">Loading manual meeting workspaces...</div>
+                    <div className="file-meta">Pulling your saved meeting context into the workspace.</div>
+                  </div>
+                </div>
+              ) : filteredManualMeetings.length === 0 ? (
+                <div className="file-card">
+                  <div className="file-info">
+                    <div className="file-name">No manual workspaces match these filters</div>
+                    <div className="file-meta">Adjust the search or create a new workspace above to start from meeting context before you have a file.</div>
+                  </div>
+                </div>
+              ) : filteredManualMeetings.map((meeting) => (
+                <div key={meeting.id} className={`file-card ${meeting.archivedAt ? 'archived-meeting-card' : ''}`}>
+                  <div className="file-icon">{meeting.icon}</div>
+                  <div className="file-info">
+                    <div className="file-name">{meeting.filename}</div>
+                    <div className="file-meta">
+                      {meeting.meetingStartAt ? formatDateWithFallback(meeting.meetingStartAt) : 'Date not set'}
+                      {meeting.organizerName ? ` • ${meeting.organizerName}` : ''}
+                      {meeting.attendeeSummary ? ` • ${meeting.attendeeSummary}` : ''}
+                    </div>
+                    {(meeting.infoChips.length > 0 || meeting.relatedOutputs.length > 0) && (
+                      <div className="meeting-card-secondary-meta">
+                        {meeting.infoChips.join(' • ')}
+                        {meeting.infoChips.length > 0 && meeting.relatedOutputs.length > 0 ? ' • ' : ''}
+                        {meeting.relatedOutputs.length > 0 ? `Outputs: ${meeting.relatedOutputs.join(', ')}` : ''}
+                      </div>
+                    )}
+                    {meeting.notes && (
+                      <div className="meeting-card-notes">
+                        {truncateText(meeting.notes, 180)}
+                      </div>
+                    )}
+                    {meeting.externalMeetingUrl && (
+                      <div className="meeting-card-link-row">
+                        <a href={meeting.externalMeetingUrl} target="_blank" rel="noreferrer" className="meeting-card-link">
+                          Open meeting link
+                        </a>
+                      </div>
+                    )}
+                    {meeting.statusNote && (
+                      <div className={`file-card-status-note ${meeting.statusTone}`}>
+                        {meeting.statusNote}
+                      </div>
+                    )}
+                  </div>
+                  <div className="meeting-card-actions">
+                    <button className="btn-secondary-large" onClick={() => handleEditMeeting(meeting)}>
+                      Edit
+                    </button>
+                    {!meeting.archivedAt && (
+                      <button className="btn-primary-large" onClick={() => handleUseMeeting(meeting)}>
+                        Use in Upload
+                      </button>
+                    )}
+                    <button
+                      className="account-back-button"
+                      disabled={archiveBusyId === meeting.id}
+                      onClick={() => handleArchiveToggle(meeting, meeting.archivedAt ? 'restore' : 'archive')}
+                    >
+                      {archiveBusyId === meeting.id ? 'Saving...' : meeting.archivedAt ? 'Restore' : 'Archive'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="meetings-history-section">
+            <div className="meetings-section-header">
+              <h2 className="section-title">All meeting records</h2>
+              <button className="account-back-button" onClick={() => setActiveTab('home')}>
+                Open Home history
+              </button>
+            </div>
+
+            <div className="files-list">
+              {historyLoading ? (
+                <div className="file-card">
+                  <div className="file-info">
+                    <div className="file-name">Loading meeting records...</div>
+                    <div className="file-meta">Fetching meeting history for your workspace.</div>
+                  </div>
+                </div>
+              ) : recentMeetings.length === 0 ? (
+                <div className="file-card">
+                  <div className="file-info">
+                    <div className="file-name">No meetings have been processed yet</div>
+                    <div className="file-meta">Upload your first Teams recording to start building a meeting-centered history.</div>
+                  </div>
+                </div>
+              ) : recentMeetings.map((meeting) => (
+                <div key={meeting.id} className="file-card">
+                  <div className="file-icon">
+                    {meeting.status === 'audio' && '🎧'}
+                    {meeting.status === 'transcript' && '📝'}
+                    {meeting.status === 'summary' && '📊'}
+                  </div>
+                  <div className="file-info">
+                    <div className="file-name">{meeting.filename}</div>
+                    <div className="file-meta">
+                      {meeting.fileTypeLabel} • {meeting.displayDate}
+                      {meeting.relatedOutputs.length > 0 && ` • Related outputs: ${meeting.relatedOutputs.join(', ')}`}
+                    </div>
+                    {meeting.statusNote && (
+                      <div className={`file-card-status-note ${meeting.statusTone}`}>
+                        {meeting.statusNote}
+                      </div>
+                    )}
+                  </div>
+                  <div className="file-status">
+                    <span className={`badge ${meeting.statusBadgeClass}`}>{meeting.statusLabel}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <div className="record-right-column">
+          <aside className="intent-panel">
+            <h2 className="intent-title">Meetings workflow</h2>
+
+            <div className="intent-item">
+              <div className="intent-number">1</div>
+              <div className="intent-content">
+                <div className="intent-heading">Create a meeting workspace</div>
+                <div className="intent-description">
+                  Start with title, organizer, date, and notes so the meeting exists in IBM Recap even before the recording arrives.
+                </div>
+              </div>
+            </div>
+
+            <div className="intent-item">
+              <div className="intent-number">2</div>
+              <div className="intent-content">
+                <div className="intent-heading">Pass that meeting into Upload</div>
+                <div className="intent-description">
+                  Use the workspace in Upload when you have the recording, whether it comes from Teams, OneDrive, SharePoint, or a local file.
+                </div>
+              </div>
+            </div>
+
+            <div className="intent-item">
+              <div className="intent-number">3</div>
+              <div className="intent-content">
+                <div className="intent-heading">Continue through transcript and summary</div>
+                <div className="intent-description">
+                  Once Upload is done, the existing Transcribe and Summarize tabs continue the workflow with your saved defaults and meeting-linked history.
+                </div>
+              </div>
+            </div>
+
+            <div className="intent-item">
+              <div className="intent-number">4</div>
+              <div className="intent-content">
+                <div className="intent-heading">Add Microsoft connection later if it becomes available</div>
+                <div className="intent-description">
+                  This manual workspace keeps the product useful today while preserving a clean upgrade path for Teams calendar sync later.
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
       </div>
     </div>
   );
@@ -1763,13 +2571,28 @@ function RecordTab() {
 function AccountTab({ accountProfile, storageUsage, accountLoading, onBack, refresh }) {
   const { user, updateAccount } = useAuth();
   const [fullName, setFullName] = React.useState(user?.full_name || '');
+  const [defaultTranscriptType, setDefaultTranscriptType] = React.useState('standard');
+  const [defaultSpeakerDiarization, setDefaultSpeakerDiarization] = React.useState(false);
+  const [defaultSummaryType, setDefaultSummaryType] = React.useState('standard');
+  const [preferredExportFormat, setPreferredExportFormat] = React.useState('pdf');
   const [saving, setSaving] = React.useState(false);
   const [message, setMessage] = React.useState('');
   const [error, setError] = React.useState('');
 
   React.useEffect(() => {
     setFullName(accountProfile?.fullName || user?.full_name || '');
-  }, [accountProfile?.fullName, user?.full_name]);
+    setDefaultTranscriptType(accountProfile?.defaultTranscriptType || 'standard');
+    setDefaultSpeakerDiarization(Boolean(accountProfile?.defaultSpeakerDiarization));
+    setDefaultSummaryType(accountProfile?.defaultSummaryType || 'standard');
+    setPreferredExportFormat(accountProfile?.preferredExportFormat || 'pdf');
+  }, [
+    accountProfile?.fullName,
+    accountProfile?.defaultTranscriptType,
+    accountProfile?.defaultSpeakerDiarization,
+    accountProfile?.defaultSummaryType,
+    accountProfile?.preferredExportFormat,
+    user?.full_name
+  ]);
 
   const handleSave = async (event) => {
     event.preventDefault();
@@ -1778,11 +2601,17 @@ function AccountTab({ accountProfile, storageUsage, accountLoading, onBack, refr
     setError('');
 
     try {
-      await updateAccount(fullName);
+      await updateAccount({
+        fullName,
+        defaultTranscriptType,
+        defaultSpeakerDiarization,
+        defaultSummaryType,
+        preferredExportFormat
+      });
       await refresh();
-      setMessage('Account details saved successfully.');
+      setMessage('Account preferences saved successfully.');
     } catch (saveError) {
-      setError(saveError.message || 'Failed to save account details');
+      setError(saveError.message || 'Failed to save account preferences');
     } finally {
       setSaving(false);
     }
@@ -1862,9 +2691,93 @@ function AccountTab({ accountProfile, storageUsage, accountLoading, onBack, refr
             </div>
 
             <button className="btn-primary-large" type="submit" disabled={saving || accountLoading}>
-              {saving ? 'Saving...' : 'Save account details'}
+              {saving ? 'Saving...' : 'Save profile & preferences'}
             </button>
           </form>
+        </section>
+
+        <section className="account-panel">
+          <h2 className="account-section-title">Workspace defaults</h2>
+          <div className="account-preferences-stack">
+            <div className="account-preference-card">
+              <div className="account-preference-copy">
+                <div className="account-preference-title">Default transcription mode</div>
+                <div className="account-preference-description">Choose whether the transcription screen should open in standard or customized mode by default.</div>
+              </div>
+              <div className="account-segmented-control" role="radiogroup" aria-label="Default transcription mode">
+                <button
+                  type="button"
+                  className={`account-segmented-option ${defaultTranscriptType === 'standard' ? 'selected' : ''}`}
+                  onClick={() => setDefaultTranscriptType('standard')}
+                  disabled={saving || accountLoading}
+                >
+                  Standard
+                </button>
+                <button
+                  type="button"
+                  className={`account-segmented-option ${defaultTranscriptType === 'custom' ? 'selected' : ''}`}
+                  onClick={() => setDefaultTranscriptType('custom')}
+                  disabled={saving || accountLoading}
+                >
+                  Customized
+                </button>
+              </div>
+            </div>
+
+            <label className="account-toggle-row">
+              <div className="account-preference-copy">
+                <div className="account-preference-title">Enable speaker diarization by default</div>
+                <div className="account-preference-description">Pre-select speaker separation whenever a user opens the transcription workflow.</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={defaultSpeakerDiarization}
+                onChange={(e) => setDefaultSpeakerDiarization(e.target.checked)}
+                disabled={saving || accountLoading}
+              />
+            </label>
+
+            <div className="account-preference-card">
+              <div className="account-preference-copy">
+                <div className="account-preference-title">Default summary style</div>
+                <div className="account-preference-description">Set the summary experience the app should open with after a transcript is ready.</div>
+              </div>
+              <div className="account-segmented-control" role="radiogroup" aria-label="Default summary style">
+                <button
+                  type="button"
+                  className={`account-segmented-option ${defaultSummaryType === 'standard' ? 'selected' : ''}`}
+                  onClick={() => setDefaultSummaryType('standard')}
+                  disabled={saving || accountLoading}
+                >
+                  Standard
+                </button>
+                <button
+                  type="button"
+                  className={`account-segmented-option ${defaultSummaryType === 'structured' ? 'selected' : ''}`}
+                  onClick={() => setDefaultSummaryType('structured')}
+                  disabled={saving || accountLoading}
+                >
+                  Structured
+                </button>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="preferredExportFormat">Preferred export format</label>
+              <select
+                id="preferredExportFormat"
+                className="account-select"
+                value={preferredExportFormat}
+                onChange={(e) => setPreferredExportFormat(e.target.value)}
+                disabled={saving || accountLoading}
+              >
+                <option value="pdf">PDF</option>
+                <option value="markdown">Markdown</option>
+                <option value="text">Plain text</option>
+              </select>
+              <small>This preference is stored now and will be used as export choices become configurable across the app.</small>
+            </div>
+          </div>
         </section>
 
         <section className="account-panel">
@@ -1907,7 +2820,7 @@ function AccountTab({ accountProfile, storageUsage, accountLoading, onBack, refr
   );
 }
 
-// Analytics Tab Component
+// Ask Recap Tab Component
 function AnalyticsTab() {
   return (
     <div className="coming-soon-tab">
@@ -2000,11 +2913,13 @@ function buildHistoryEntries(accountFiles) {
     const createdAt = file.created_at || file.updated_at || new Date().toISOString();
     const hasTranscript = file.file_type === 'transcript' || file.has_transcript;
     const hasSummary = file.file_type === 'summary' || file.has_summary;
+    const processingStatus = file.processing_status || null;
     const relatedOutputs = [
       hasTranscript ? 'Transcript' : null,
       hasSummary ? 'Summary' : null
     ].filter(Boolean);
     const infoChips = [
+      processingStatus ? formatProcessingStatus(processingStatus) : null,
       file.speaker_diarization ? 'Speaker diarization' : null,
       file.action_items_count ? `${file.action_items_count} action items` : null,
       file.mime_type ? simplifyMimeType(file.mime_type) : null
@@ -2013,6 +2928,8 @@ function buildHistoryEntries(accountFiles) {
     return {
       ...file,
       id: file.id,
+      meetingId: file.meeting_id || null,
+      processingStatus,
       uploadedAt: createdAt,
       createdAt,
       displayDate: formatDate(createdAt),
@@ -2029,61 +2946,54 @@ function buildHistoryEntries(accountFiles) {
   });
 }
 
-function buildGroupedHistory(historyEntries) {
-  const groups = new Map();
+function buildMeetingEntries(accountMeetings) {
+  return (accountMeetings || []).map((meeting) => {
+    const uploadedAt = meeting.meeting_start_at || meeting.uploaded_at || meeting.created_at || new Date().toISOString();
+    const processingStatus = meeting.processing_status || 'uploaded';
+    const hasTranscript = !!meeting.hasTranscript;
+    const hasSummary = !!meeting.hasSummary;
+    const relatedOutputs = [
+      hasTranscript ? 'Transcript' : null,
+      hasSummary ? 'Summary' : null
+    ].filter(Boolean);
+    const infoChips = [
+      formatProcessingStatus(processingStatus),
+      meeting.speakerDiarization ? 'Speaker diarization' : null,
+      meeting.actionItemsCount ? `${meeting.actionItemsCount} action items` : null,
+      meeting.artifactCount ? `${meeting.artifactCount} artifacts` : null
+    ].filter(Boolean);
 
-  historyEntries.forEach((entry) => {
-    const key = entry.displayFilename.toLowerCase();
-    if (!groups.has(key)) {
-      groups.set(key, {
-        id: `group-${key}`,
-        filename: entry.displayFilename,
-        uploadedAt: entry.uploadedAt,
-        displayDate: entry.displayDate,
-        hasTranscript: false,
-        hasSummary: false,
-        speakerDiarization: false,
-        actionItems: 0,
-        fileTypeLabel: 'Meeting file',
-        status: 'audio',
-        statusLabel: 'Audio only',
-        relatedOutputs: [],
-        infoChips: []
-      });
-    }
-
-    const group = groups.get(key);
-    if (new Date(entry.uploadedAt) > new Date(group.uploadedAt)) {
-      group.uploadedAt = entry.uploadedAt;
-      group.displayDate = entry.displayDate;
-    }
-
-    group.hasTranscript = group.hasTranscript || entry.hasTranscript;
-    group.hasSummary = group.hasSummary || entry.hasSummary;
-    group.speakerDiarization = group.speakerDiarization || !!entry.speaker_diarization;
-    group.actionItems = Math.max(group.actionItems, entry.action_items_count || 0);
-    group.relatedOutputs = Array.from(new Set([...group.relatedOutputs, ...entry.relatedOutputs]));
-  });
-
-  return Array.from(groups.values())
-    .map((group) => {
-      const infoChips = [
-        group.speakerDiarization ? 'Speaker diarization' : null,
-        group.actionItems ? `${group.actionItems} action items` : null
-      ].filter(Boolean);
-
-      if (group.hasSummary) {
-        group.status = 'summary';
-        group.statusLabel = 'Summary ready';
-      } else if (group.hasTranscript) {
-        group.status = 'transcript';
-        group.statusLabel = 'Transcript ready';
-      }
-
-      group.infoChips = infoChips;
-      return group;
-    })
-    .sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+    return {
+      id: meeting.id,
+      filename: meeting.title || normalizeDisplayFilename(meeting.original_filename, 'audio'),
+      uploadedAt,
+      meetingStartAt: meeting.meeting_start_at || null,
+      displayDate: formatDate(uploadedAt),
+      fileTypeLabel: meeting.source_type === 'teams'
+        ? 'Teams meeting'
+        : meeting.source_type === 'manual'
+          ? 'Manual meeting workspace'
+          : 'Uploaded meeting',
+      sourceType: meeting.source_type || 'upload',
+      archivedAt: meeting.archived_at || null,
+      organizerName: meeting.organizer_name || null,
+      attendeeSummary: meeting.attendee_summary || null,
+      externalMeetingUrl: meeting.external_meeting_url || null,
+      notes: meeting.notes || null,
+      processingStatus,
+      processingError: meeting.processing_error || null,
+      status: deriveStatus({ processing_status: processingStatus, has_summary: hasSummary, has_transcript: hasTranscript }),
+      statusLabel: deriveStatusLabel({ processing_status: processingStatus, has_summary: hasSummary, has_transcript: hasTranscript }),
+      statusTone: deriveProcessingTone(processingStatus),
+      statusBadgeClass: deriveStatusBadgeClass(processingStatus),
+      statusNote: deriveProcessingNote(meeting),
+      icon: deriveMeetingIcon(meeting),
+      hasTranscript,
+      hasSummary,
+      relatedOutputs,
+      infoChips
+    };
+  }).sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
 }
 
 function normalizeDisplayFilename(filename, fileType) {
@@ -2105,16 +3015,130 @@ function formatFileTypeLabel(fileType) {
 }
 
 function deriveStatus(file) {
+  const processingStatus = file.processing_status || file.processingStatus;
+  if (processingStatus === 'completed') return 'summary';
+  if (processingStatus === 'transcript_ready' || processingStatus === 'summarizing') return 'transcript';
+  if (processingStatus === 'failed') return 'audio';
   if (file.file_type === 'summary' || file.has_summary) return 'summary';
   if (file.file_type === 'transcript' || file.has_transcript) return 'transcript';
   return 'audio';
 }
 
 function deriveStatusLabel(file) {
+  const processingStatus = file.processing_status || file.processingStatus;
+  if ((file.source_type === 'manual' || file.sourceType === 'manual') && !file.has_summary && !file.hasSummary && !file.has_transcript && !file.hasTranscript) {
+    return 'Workspace ready';
+  }
+  if (processingStatus) {
+    return formatProcessingStatus(processingStatus);
+  }
   const status = deriveStatus(file);
   if (status === 'summary') return 'Summary ready';
   if (status === 'transcript') return 'Transcript ready';
   return 'Audio only';
+}
+
+function formatProcessingStatus(status) {
+  const labels = {
+    uploaded: 'Uploaded',
+    converting: 'Converting',
+    ready_for_transcription: 'Ready for transcription',
+    transcribing: 'Transcribing',
+    transcript_ready: 'Transcript ready',
+    summarizing: 'Summarizing',
+    completed: 'Summary ready',
+    failed: 'Failed'
+  };
+
+  return labels[status] || status.replace(/_/g, ' ');
+}
+
+function deriveProcessingTone(status) {
+  if (status === 'failed') return 'error';
+  if (status === 'completed' || status === 'transcript_ready') return 'success';
+  return 'pending';
+}
+
+function deriveStatusBadgeClass(status) {
+  if (status === 'failed') return 'badge-danger';
+  if (status === 'completed' || status === 'transcript_ready') return 'badge-success';
+  if (status === 'summarizing' || status === 'transcribing' || status === 'converting') return 'badge-progress';
+  return 'badge-warning';
+}
+
+function deriveProcessingNote(meeting) {
+  if (meeting.archived_at || meeting.archivedAt) {
+    return 'Archived workspace. Restore it when you want to reuse this meeting context.';
+  }
+  const status = meeting.processing_status || 'uploaded';
+  const sourceType = meeting.source_type || meeting.sourceType;
+  const hasTranscript = Boolean(meeting.hasTranscript || meeting.has_transcript);
+  const hasSummary = Boolean(meeting.hasSummary || meeting.has_summary);
+  const artifactCount = Number(meeting.artifactCount || 0);
+  if (sourceType === 'manual' && !hasTranscript && !hasSummary && artifactCount === 0) {
+    return 'Workspace created. Add a recording or transcript when you are ready to continue.';
+  }
+  if (status === 'failed') {
+    return meeting.processing_error
+      ? `Needs attention: ${meeting.processing_error}`
+      : 'Needs attention before this meeting can move forward.';
+  }
+
+  if (status === 'uploaded' || status === 'ready_for_transcription') {
+    return 'Ready for transcription when you want to continue the workflow.';
+  }
+
+  if (status === 'converting' || status === 'transcribing' || status === 'summarizing') {
+    return 'Processing is in progress for this meeting.';
+  }
+
+  if (status === 'transcript_ready') {
+    return 'Transcript is ready. You can continue into summary generation.';
+  }
+
+  return null;
+}
+
+function doesMeetingMatchStatusFilter(meeting, filter) {
+  if (filter === 'all') return true;
+  if (filter === 'workspace_ready') {
+    return meeting.sourceType === 'manual' && !meeting.archivedAt && !meeting.hasTranscript && !meeting.hasSummary && meeting.processingStatus === 'uploaded';
+  }
+  if (filter === 'in_progress') {
+    if (meeting.sourceType === 'manual' && !meeting.hasTranscript && !meeting.hasSummary && meeting.processingStatus === 'uploaded') {
+      return false;
+    }
+    return ['converting', 'transcribing', 'summarizing', 'uploaded', 'ready_for_transcription'].includes(meeting.processingStatus);
+  }
+  if (filter === 'transcript_ready') {
+    return meeting.processingStatus === 'transcript_ready';
+  }
+  if (filter === 'completed') {
+    return meeting.processingStatus === 'completed';
+  }
+  if (filter === 'failed') {
+    return meeting.processingStatus === 'failed';
+  }
+  return true;
+}
+
+function truncateText(value, maxLength = 160) {
+  if (!value || value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength).trimEnd()}...`;
+}
+
+function deriveMeetingIcon(meeting) {
+  if (meeting.source_type === 'manual' && !meeting.hasTranscript && !meeting.hasSummary) return '📅';
+  return deriveIcon(deriveStatus({ processing_status: meeting.processing_status, has_summary: meeting.hasSummary, has_transcript: meeting.hasTranscript }));
+}
+
+function toDateTimeLocalValue(isoString) {
+  if (!isoString) return '';
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return '';
+  const offset = date.getTimezoneOffset();
+  const localDate = new Date(date.getTime() - offset * 60000);
+  return localDate.toISOString().slice(0, 16);
 }
 
 function deriveIcon(fileType) {

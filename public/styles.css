@@ -808,6 +808,29 @@ body:not(.dark-mode) .file-card {
   box-shadow: 0 4px 12px rgba(15, 98, 254, 0.1);
 }
 
+.file-card-status-note {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.file-card-status-note.pending {
+  color: var(--ibm-yellow);
+}
+
+.file-card-status-note.success {
+  color: var(--ibm-green);
+}
+
+.file-card-status-note.error {
+  color: var(--ibm-red);
+}
+
+.file-card.clickable:focus-visible {
+  outline: 2px solid var(--ibm-blue);
+  outline-offset: 2px;
+}
+
 .file-icon {
   font-size: 32px;
   width: 48px;
@@ -821,6 +844,180 @@ body:not(.dark-mode) .file-card {
 
 body:not(.dark-mode) .file-icon {
   background: var(--ibm-gray-10);
+}
+
+.meeting-detail-panel {
+  background: var(--ibm-gray-90);
+  border: 1px solid var(--ibm-gray-80);
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+body:not(.dark-mode) .meeting-detail-panel {
+  background: white;
+  border-color: var(--ibm-gray-20);
+}
+
+.meeting-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+.meeting-detail-eyebrow {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ibm-gray-50);
+  margin-bottom: 8px;
+}
+
+.meeting-detail-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--ibm-gray-10);
+  margin: 0 0 6px 0;
+}
+
+body:not(.dark-mode) .meeting-detail-title {
+  color: var(--ibm-gray-100);
+}
+
+.meeting-detail-copy {
+  font-size: 14px;
+  color: var(--ibm-gray-40);
+}
+
+.meeting-detail-close {
+  background: transparent;
+  border: 1px solid var(--ibm-gray-70);
+  color: var(--ibm-gray-20);
+  padding: 10px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+body:not(.dark-mode) .meeting-detail-close {
+  color: var(--ibm-gray-100);
+  border-color: var(--ibm-gray-30);
+}
+
+.meeting-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.meeting-detail-card {
+  background: var(--ibm-gray-80);
+  border: 1px solid var(--ibm-gray-70);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+body:not(.dark-mode) .meeting-detail-card {
+  background: var(--ibm-gray-10);
+  border-color: var(--ibm-gray-20);
+}
+
+.meeting-detail-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ibm-gray-50);
+  margin-bottom: 8px;
+}
+
+.meeting-detail-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ibm-gray-10);
+  line-height: 1.45;
+}
+
+body:not(.dark-mode) .meeting-detail-value {
+  color: var(--ibm-gray-100);
+}
+
+.meeting-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.meeting-detail-error {
+  background: rgba(218, 30, 40, 0.08);
+  border: 1px solid rgba(218, 30, 40, 0.25);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.meeting-detail-error-copy {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ibm-red);
+}
+
+.meeting-detail-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ibm-gray-10);
+}
+
+body:not(.dark-mode) .meeting-detail-section-title {
+  color: var(--ibm-gray-100);
+}
+
+.meeting-detail-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.meeting-detail-artifact,
+.meeting-detail-artifact-empty {
+  background: var(--ibm-gray-80);
+  border: 1px solid var(--ibm-gray-70);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+body:not(.dark-mode) .meeting-detail-artifact,
+body:not(.dark-mode) .meeting-detail-artifact-empty {
+  background: var(--ibm-gray-10);
+  border-color: var(--ibm-gray-20);
+}
+
+.meeting-detail-artifact-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ibm-gray-10);
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+
+body:not(.dark-mode) .meeting-detail-artifact-name {
+  color: var(--ibm-gray-100);
+}
+
+.meeting-detail-artifact-meta,
+.meeting-detail-artifact-empty {
+  font-size: 13px;
+  color: var(--ibm-gray-40);
+  line-height: 1.5;
+}
+
+.meeting-detail-actions {
+  display: flex;
+  gap: 16px;
+}
+
+.meeting-detail-actions button {
+  flex: 1;
 }
 
 .file-info {
@@ -867,6 +1064,20 @@ body:not(.dark-mode) .file-name {
 .badge-warning {
   background: rgba(241, 194, 27, 0.1);
   color: var(--ibm-yellow);
+}
+
+.badge-progress {
+  background: rgba(15, 98, 254, 0.14);
+  color: #a6c8ff;
+}
+
+body:not(.dark-mode) .badge-progress {
+  color: var(--ibm-blue);
+}
+
+.badge-danger {
+  background: rgba(218, 30, 40, 0.12);
+  color: var(--ibm-red);
 }
 
 /* Upload Tab */
@@ -952,6 +1163,82 @@ body:not(.dark-mode) .upload-drop-zone h3 {
   width: 100%;
 }
 
+.upload-meeting-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 18px 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(69, 137, 255, 0.35);
+  background: linear-gradient(135deg, rgba(69, 137, 255, 0.12), rgba(0, 157, 154, 0.08));
+}
+
+.upload-meeting-selector {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 18px 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(69, 137, 255, 0.2);
+  background: rgba(69, 137, 255, 0.08);
+}
+
+.upload-meeting-selector-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.upload-meeting-selector-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ibm-gray-40);
+}
+
+.upload-meeting-selector-subtitle {
+  font-size: 14px;
+  color: var(--ibm-gray-30);
+  max-width: 760px;
+}
+
+.upload-meeting-selector-input {
+  min-width: 300px;
+}
+
+.upload-meeting-context-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.upload-meeting-context-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ibm-gray-40);
+}
+
+.upload-meeting-context-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ibm-gray-10);
+}
+
+body:not(.dark-mode) .upload-meeting-context-title {
+  color: var(--ibm-gray-100);
+}
+
+.upload-meeting-context-meta {
+  font-size: 14px;
+  color: var(--ibm-gray-30);
+}
+
 .upload-tab-content {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.8fr);
@@ -984,6 +1271,89 @@ body:not(.dark-mode) .upload-drop-zone h3 {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+.upload-workflow-callout {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(69, 137, 255, 0.12);
+  border: 1px solid rgba(69, 137, 255, 0.24);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ibm-gray-20);
+}
+
+body:not(.dark-mode) .upload-workflow-callout {
+  color: var(--ibm-gray-100);
+}
+
+.summary-context-panel {
+  background: var(--ibm-gray-90);
+  border: 1px solid var(--ibm-gray-80);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+body:not(.dark-mode) .summary-context-panel {
+  background: white;
+  border-color: var(--ibm-gray-20);
+}
+
+.summary-context-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.summary-context-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.summary-context-card,
+.summary-context-note-block {
+  background: var(--ibm-gray-80);
+  border: 1px solid var(--ibm-gray-70);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+body:not(.dark-mode) .summary-context-card,
+body:not(.dark-mode) .summary-context-note-block {
+  background: var(--ibm-gray-10);
+  border-color: var(--ibm-gray-20);
+}
+
+.summary-context-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ibm-gray-50);
+  margin-bottom: 6px;
+}
+
+.summary-context-value,
+.summary-context-copy {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ibm-gray-10);
+  overflow-wrap: anywhere;
+}
+
+body:not(.dark-mode) .summary-context-value,
+body:not(.dark-mode) .summary-context-copy {
+  color: var(--ibm-gray-100);
+}
+
+.summary-context-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 body:not(.dark-mode) .upload-workflow-panel {
@@ -1270,7 +1640,7 @@ body:not(.dark-mode) .account-back-button {
 
 .account-grid {
   display: grid;
-  grid-template-columns: 1.1fr 0.9fr;
+  grid-template-columns: 1.05fr 0.95fr;
   gap: 24px;
 }
 
@@ -1331,7 +1701,26 @@ body:not(.dark-mode) .account-form label {
   font-size: 14px;
 }
 
+.account-form textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--ibm-gray-70);
+  background: var(--ibm-gray-80);
+  color: var(--ibm-gray-10);
+  font-size: 14px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  resize: vertical;
+  min-height: 120px;
+}
+
 body:not(.dark-mode) .account-form input {
+  background: white;
+  border-color: var(--ibm-gray-30);
+  color: var(--ibm-gray-100);
+}
+
+body:not(.dark-mode) .account-form textarea {
   background: white;
   border-color: var(--ibm-gray-30);
   color: var(--ibm-gray-100);
@@ -1345,6 +1734,118 @@ body:not(.dark-mode) .account-form input {
 .account-form small {
   color: var(--ibm-gray-50);
   font-size: 12px;
+}
+
+.account-preferences-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.account-preference-card,
+.account-toggle-row {
+  background: var(--ibm-gray-80);
+  border: 1px solid var(--ibm-gray-70);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+body:not(.dark-mode) .account-preference-card,
+body:not(.dark-mode) .account-toggle-row {
+  background: var(--ibm-gray-10);
+  border-color: var(--ibm-gray-20);
+}
+
+.account-preference-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.account-preference-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.account-preference-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ibm-gray-10);
+}
+
+body:not(.dark-mode) .account-preference-title {
+  color: var(--ibm-gray-100);
+}
+
+.account-preference-description {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ibm-gray-40);
+}
+
+.account-segmented-control {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.account-segmented-option {
+  border: 1px solid var(--ibm-gray-60);
+  background: transparent;
+  color: var(--ibm-gray-20);
+  border-radius: 999px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+body:not(.dark-mode) .account-segmented-option {
+  color: var(--ibm-gray-90);
+  border-color: var(--ibm-gray-30);
+}
+
+.account-segmented-option.selected {
+  background: rgba(15, 98, 254, 0.14);
+  border-color: rgba(15, 98, 254, 0.6);
+  color: #a6c8ff;
+}
+
+body:not(.dark-mode) .account-segmented-option.selected {
+  color: var(--ibm-blue);
+}
+
+.account-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.account-toggle-row input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--ibm-blue);
+  flex-shrink: 0;
+}
+
+.account-select {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--ibm-gray-70);
+  background: var(--ibm-gray-80);
+  color: var(--ibm-gray-10);
+  font-size: 14px;
+  font-family: 'IBM Plex Sans', sans-serif;
+}
+
+body:not(.dark-mode) .account-select {
+  background: white;
+  border-color: var(--ibm-gray-30);
+  color: var(--ibm-gray-100);
 }
 
 .account-meta-grid {
@@ -1429,6 +1930,16 @@ body:not(.dark-mode) .account-storage-progress {
   height: 100%;
   border-radius: 999px;
   background: linear-gradient(90deg, var(--ibm-blue), var(--ibm-teal));
+}
+
+@media (max-width: 980px) {
+  .account-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .account-toggle-row {
+    align-items: flex-start;
+  }
 }
 
 
@@ -1637,6 +2148,14 @@ body:not(.dark-mode) .recent-upload-filename {
   .account-meta-grid {
     grid-template-columns: 1fr;
   }
+
+  .meeting-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .meeting-detail-actions {
+    flex-direction: column;
+  }
 }
 
 /* Responsive Design for Transcribe and Summarize Tabs */
@@ -1663,6 +2182,12 @@ body:not(.dark-mode) .recent-upload-filename {
 .record-tab {
   max-width: none !important;
   width: 100%;
+}
+
+.meetings-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 
 .record-tab-content {
@@ -1715,6 +2240,47 @@ body:not(.dark-mode) .recent-upload-filename {
   border-color: #393939;
 }
 
+.meeting-card-primary {
+  border-color: rgba(69, 137, 255, 0.35);
+  background: linear-gradient(135deg, rgba(69, 137, 255, 0.12), rgba(0, 157, 154, 0.1));
+}
+
+body:not(.dark-mode) .meeting-card-primary {
+  background: linear-gradient(135deg, rgba(69, 137, 255, 0.08), rgba(0, 157, 154, 0.08));
+}
+
+.meeting-card-error {
+  border-color: rgba(218, 30, 40, 0.28);
+  background: rgba(218, 30, 40, 0.06);
+}
+
+.meeting-card-calendar {
+  padding: 24px;
+}
+
+.meetings-compose-panel {
+  gap: 24px;
+}
+
+.meetings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.meetings-form-actions {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.meeting-card-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
 .meeting-card:hover {
   border-color: var(--ibm-blue);
   transform: translateY(-2px);
@@ -1752,6 +2318,20 @@ body:not(.dark-mode) .recent-upload-filename {
   min-width: 0;
 }
 
+.meetings-history-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.meetings-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
 .meeting-title {
   font-size: 18px;
   font-weight: 600;
@@ -1771,6 +2351,95 @@ body:not(.dark-mode) .recent-upload-filename {
 
 .dark-mode .meeting-meta {
   color: #a8a8a8;
+}
+
+.meetings-filter-bar {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.meetings-search-container {
+  flex: 1;
+  min-width: 280px;
+}
+
+.meetings-archive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #525252;
+}
+
+.dark-mode .meetings-archive-toggle {
+  color: #c6c6c6;
+}
+
+.meeting-card-secondary-meta {
+  font-size: 13px;
+  color: #6f6f6f;
+  line-height: 1.5;
+  margin-top: 8px;
+}
+
+.dark-mode .meeting-card-secondary-meta {
+  color: #c6c6c6;
+}
+
+.meeting-card-notes {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #525252;
+  background: rgba(141, 141, 141, 0.08);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.dark-mode .meeting-card-notes {
+  color: #e0e0e0;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.meeting-card-link-row {
+  margin-top: 10px;
+}
+
+.meeting-card-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f62fe;
+  text-decoration: none;
+}
+
+.meeting-card-link:hover {
+  text-decoration: underline;
+}
+
+.archived-meeting-card {
+  opacity: 0.82;
+  border-style: dashed;
+}
+
+.archived-meeting-card .file-name {
+  color: #8d8d8d;
+}
+
+.dark-mode .archived-meeting-card .file-name {
+  color: #c6c6c6;
+}
+
+@media (max-width: 960px) {
+  .upload-meeting-selector {
+    align-items: stretch;
+  }
+
+  .upload-meeting-selector-input {
+    width: 100%;
+    min-width: 0;
+  }
 }
 
 .btn-teams {

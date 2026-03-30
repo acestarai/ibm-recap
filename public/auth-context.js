@@ -60,7 +60,10 @@ function AuthProvider({ children }) {
     const data = await response.json();
     
     if (!response.ok) {
-      throw new Error(data.error || 'Registration failed');
+      const error = new Error(data.error || 'Registration failed');
+      error.code = data.code;
+      error.retryAfterSeconds = data.retryAfterSeconds;
+      throw error;
     }
     
     return data;
@@ -78,6 +81,7 @@ function AuthProvider({ children }) {
     if (!response.ok) {
       const error = new Error(data.error || 'Verification failed');
       error.code = data.code;
+      error.retryAfterSeconds = data.retryAfterSeconds;
       throw error;
     }
 
@@ -96,6 +100,7 @@ function AuthProvider({ children }) {
     if (!response.ok) {
       const error = new Error(data.error || 'Login failed');
       error.code = data.code;
+      error.retryAfterSeconds = data.retryAfterSeconds;
       throw error;
     }
     
@@ -136,7 +141,10 @@ function AuthProvider({ children }) {
     const data = await response.json();
     
     if (!response.ok) {
-      throw new Error(data.error || 'Failed to send reset email');
+      const error = new Error(data.error || 'Failed to send reset email');
+      error.code = data.code;
+      error.retryAfterSeconds = data.retryAfterSeconds;
+      throw error;
     }
     
     return data;
@@ -168,7 +176,10 @@ function AuthProvider({ children }) {
     const data = await response.json();
     
     if (!response.ok) {
-      throw new Error(data.error || 'Failed to resend verification');
+      const error = new Error(data.error || 'Failed to resend verification');
+      error.code = data.code;
+      error.retryAfterSeconds = data.retryAfterSeconds;
+      throw error;
     }
     
     return data;
@@ -195,10 +206,14 @@ function AuthProvider({ children }) {
     }
   }
 
-  async function updateAccount(fullName) {
+  async function updateAccount(updates) {
     if (!token) {
       throw new Error('Authentication required');
     }
+
+    const payload = typeof updates === 'string'
+      ? { fullName: updates }
+      : updates || {};
 
     const response = await fetch('/api/auth/account', {
       method: 'PATCH',
@@ -206,7 +221,7 @@ function AuthProvider({ children }) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
       },
-      body: JSON.stringify({ fullName })
+      body: JSON.stringify(payload)
     });
 
     const data = await response.json();

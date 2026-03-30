@@ -9,6 +9,86 @@ const router = express.Router();
 const VERIFICATION_CODE_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_STORAGE_LIMIT_MB = Number(process.env.STORAGE_LIMIT_MB || 50);
 const DEFAULT_STORAGE_LIMIT_BYTES = DEFAULT_STORAGE_LIMIT_MB * 1024 * 1024;
+const rateLimitStore = new Map();
+const resendCooldownStore = new Map();
+const RATE_LIMIT_WINDOWS = {
+  register: { limit: 5, windowMs: 15 * 60 * 1000 },
+  login: { limit: 10, windowMs: 15 * 60 * 1000 },
+  verifyCode: { limit: 8, windowMs: 15 * 60 * 1000 },
+  forgotPassword: { limit: 5, windowMs: 15 * 60 * 1000 },
+  resendVerification: { limit: 5, windowMs: 15 * 60 * 1000 }
+};
+const RESEND_COOLDOWN_MS = 60 * 1000;
+
+function getClientIdentifier(req, email = '') {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  return `${req.ip || 'unknown'}:${normalizedEmail}`;
+}
+
+function consumeRateLimit(action, key) {
+  const config = RATE_LIMIT_WINDOWS[action];
+  if (!config) return { allowed: true };
+
+  const storeKey = `${action}:${key}`;
+  const now = Date.now();
+  const current = rateLimitStore.get(storeKey);
+
+  if (!current || current.expiresAt <= now) {
+    rateLimitStore.set(storeKey, {
+      count: 1,
+      expiresAt: now + config.windowMs
+    });
+    return { allowed: true };
+  }
+
+  if (current.count >= config.limit) {
+    return {
+      allowed: false,
+      retryAfterMs: Math.max(current.expiresAt - now, 0)
+    };
+  }
+
+  current.count += 1;
+  rateLimitStore.set(storeKey, current);
+  return { allowed: true };
+}
+
+function enforceRateLimit(req, res, action, email = '') {
+  const key = getClientIdentifier(req, email);
+  const result = consumeRateLimit(action, key);
+  if (result.allowed) {
+    return true;
+  }
+
+  const retryAfterSeconds = Math.ceil((result.retryAfterMs || 0) / 1000);
+  res.setHeader('Retry-After', retryAfterSeconds);
+  res.status(429).json({
+    error: 'Too many attempts. Please wait and try again.',
+    code: 'RATE_LIMITED',
+    retryAfterSeconds
+  });
+  return false;
+}
+
+function enforceResendCooldown(req, res, email = '') {
+  const key = getClientIdentifier(req, email);
+  const now = Date.now();
+  const cooldownUntil = resendCooldownStore.get(key) || 0;
+
+  if (cooldownUntil > now) {
+    const retryAfterSeconds = Math.ceil((cooldownUntil - now) / 1000);
+    res.setHeader('Retry-After', retryAfterSeconds);
+    res.status(429).json({
+      error: `Please wait ${retryAfterSeconds} seconds before resending the verification email.`,
+      code: 'RESEND_COOLDOWN',
+      retryAfterSeconds
+    });
+    return false;
+  }
+
+  resendCooldownStore.set(key, now + RESEND_COOLDOWN_MS);
+  return true;
+}
 
 function formatUser(user) {
   return {
@@ -17,8 +97,28 @@ function formatUser(user) {
     fullName: user.full_name,
     createdAt: user.created_at || null,
     lastLogin: user.last_login || null,
-    emailVerified: user.email_verified
+    emailVerified: user.email_verified,
+    defaultTranscriptType: user.default_transcript_type || 'standard',
+    defaultSpeakerDiarization: Boolean(user.default_speaker_diarization),
+    defaultSummaryType: user.default_summary_type || 'standard',
+    preferredExportFormat: user.preferred_export_format || 'pdf'
   };
+}
+
+function normalizeTranscriptType(value) {
+  return value === 'custom' ? 'custom' : 'standard';
+}
+
+function normalizeSummaryType(value) {
+  return value === 'structured' ? 'structured' : 'standard';
+}
+
+function normalizePreferredExportFormat(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'markdown' || normalized === 'text') {
+    return normalized;
+  }
+  return 'pdf';
 }
 
 async function getStorageUsage(userId) {
@@ -181,6 +281,11 @@ function renderVerificationPage({ title, message, success }) {
 router.post('/register', async (req, res) => {
   try {
     const { email, password, fullName } = req.body;
+    const normalizedEmail = String(email || '').toLowerCase();
+
+    if (!enforceRateLimit(req, res, 'register', normalizedEmail)) {
+      return;
+    }
     
     // Validate input
     if (!email || !password) {
@@ -208,16 +313,19 @@ router.post('/register', async (req, res) => {
     const { data: existingUser } = await supabase
       .from('users')
       .select('id, email_verified')
-      .eq('email', email.toLowerCase())
+      .eq('email', normalizedEmail)
       .single();
     
     if (existingUser) {
       if (!existingUser.email_verified) {
-        await issueVerificationCode(existingUser.id, email.toLowerCase());
+        if (!enforceResendCooldown(req, res, normalizedEmail)) {
+          return;
+        }
+        await issueVerificationCode(existingUser.id, normalizedEmail);
         return res.status(200).json({
           message: 'A verification email with a 6-digit code and verification link has been sent. Use either one to complete registration.',
           requiresVerification: true,
-          email: email.toLowerCase()
+          email: normalizedEmail
         });
       }
 
@@ -234,7 +342,7 @@ router.post('/register', async (req, res) => {
     const { data: user, error } = await supabase
       .from('users')
       .insert({
-        email: email.toLowerCase(),
+        email: normalizedEmail,
         password_hash: passwordHash,
         full_name: fullName || null,
         email_verified: false
@@ -278,6 +386,11 @@ router.post('/register', async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    const normalizedEmail = String(email || '').toLowerCase();
+
+    if (!enforceRateLimit(req, res, 'login', normalizedEmail)) {
+      return;
+    }
     
     // Validate input
     if (!email || !password) {
@@ -288,7 +401,7 @@ router.post('/login', async (req, res) => {
     const { data: user, error } = await supabase
       .from('users')
       .select('id, email, password_hash, full_name, email_verified')
-      .eq('email', email.toLowerCase())
+      .eq('email', normalizedEmail)
       .single();
     
     if (error || !user) {
@@ -440,6 +553,11 @@ router.get('/verify', async (req, res) => {
 router.post('/verify-code', async (req, res) => {
   try {
     const { email, code } = req.body;
+    const normalizedEmail = String(email || '').toLowerCase();
+
+    if (!enforceRateLimit(req, res, 'verifyCode', normalizedEmail)) {
+      return;
+    }
 
     if (!email || !code) {
       return res.status(400).json({
@@ -448,7 +566,6 @@ router.post('/verify-code', async (req, res) => {
       });
     }
 
-    const normalizedEmail = email.toLowerCase();
     const normalizedCode = String(code).trim();
     const codeHash = hashToken(normalizedCode);
 
@@ -518,16 +635,25 @@ router.post('/verify-code', async (req, res) => {
 router.post('/resend-verification', async (req, res) => {
   try {
     const { email } = req.body;
+    const normalizedEmail = String(email || '').toLowerCase();
+
+    if (!enforceRateLimit(req, res, 'resendVerification', normalizedEmail)) {
+      return;
+    }
     
     if (!email) {
       return res.status(400).json({ error: 'Email is required' });
+    }
+
+    if (!enforceResendCooldown(req, res, normalizedEmail)) {
+      return;
     }
     
     // Get user
     const { data: user } = await supabase
       .from('users')
       .select('id, email, email_verified')
-      .eq('email', email.toLowerCase())
+      .eq('email', normalizedEmail)
       .single();
     
     // Always return success (don't reveal if user exists)
@@ -558,6 +684,11 @@ router.post('/resend-verification', async (req, res) => {
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
+    const normalizedEmail = String(email || '').toLowerCase();
+
+    if (!enforceRateLimit(req, res, 'forgotPassword', normalizedEmail)) {
+      return;
+    }
     
     if (!email) {
       return res.status(400).json({ error: 'Email is required' });
@@ -567,7 +698,7 @@ router.post('/forgot-password', async (req, res) => {
     const { data: user } = await supabase
       .from('users')
       .select('id, email')
-      .eq('email', email.toLowerCase())
+      .eq('email', normalizedEmail)
       .single();
     
     // Always return success (don't reveal if user exists)
@@ -722,7 +853,7 @@ router.get('/account', authenticate, async (req, res) => {
   try {
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, email, full_name, email_verified, created_at, last_login')
+      .select('id, email, full_name, email_verified, created_at, last_login, default_transcript_type, default_speaker_diarization, default_summary_type, preferred_export_format')
       .eq('id', req.user.id)
       .single();
 
@@ -754,16 +885,30 @@ router.get('/account', authenticate, async (req, res) => {
  */
 router.patch('/account', authenticate, async (req, res) => {
   try {
-    const { fullName } = req.body;
+    const {
+      fullName,
+      defaultTranscriptType,
+      defaultSpeakerDiarization,
+      defaultSummaryType,
+      preferredExportFormat
+    } = req.body;
     const normalizedFullName = typeof fullName === 'string' ? fullName.trim() : null;
+    const normalizedTranscriptType = normalizeTranscriptType(defaultTranscriptType);
+    const normalizedSpeakerDiarization = Boolean(defaultSpeakerDiarization);
+    const normalizedSummaryType = normalizeSummaryType(defaultSummaryType);
+    const normalizedPreferredExportFormat = normalizePreferredExportFormat(preferredExportFormat);
 
     const { data: user, error } = await supabase
       .from('users')
       .update({
-        full_name: normalizedFullName || null
+        full_name: normalizedFullName || null,
+        default_transcript_type: normalizedTranscriptType,
+        default_speaker_diarization: normalizedSpeakerDiarization,
+        default_summary_type: normalizedSummaryType,
+        preferred_export_format: normalizedPreferredExportFormat
       })
       .eq('id', req.user.id)
-      .select('id, email, full_name, email_verified, created_at, last_login')
+      .select('id, email, full_name, email_verified, created_at, last_login, default_transcript_type, default_speaker_diarization, default_summary_type, preferred_export_format')
       .single();
 
     if (error || !user) {
