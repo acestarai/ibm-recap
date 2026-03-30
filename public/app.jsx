@@ -862,8 +862,8 @@ function UploadTab({ files, busy, setBusy, refresh, setActiveTab, meetingEntries
 
   return (
     <div className="upload-tab">
-      <h1 className="tab-title">Upload audio file</h1>
-      <p className="tab-subtitle">Upload meeting recordings in MP3, M4A, WAV, or MP4 format. MP4 videos are converted to MP3 automatically.</p>
+      <h1 className="tab-title">Upload meeting recording</h1>
+      <p className="tab-subtitle">Upload meeting recordings in MP3, M4A, WAV, or MP4 format. Video recordings are converted to MP3 automatically for transcription.</p>
 
       {!selectedMeetingContext && availableManualMeetings.length > 0 && (
         <div className="upload-meeting-selector">
@@ -924,7 +924,7 @@ function UploadTab({ files, busy, setBusy, refresh, setActiveTab, meetingEntries
             onDrop={handleDrop}
           >
             <div className="upload-icon">📁</div>
-            <h3>Drag and drop your audio file here</h3>
+            <h3>Drag and drop your meeting recording here</h3>
             <p>or</p>
             <label className="upload-button">
               <input
@@ -1090,7 +1090,7 @@ function AudioPlayer({ audioFile, originalFilename }) {
         <h3 className="audio-player-title">Native audio preview</h3>
         <span className="audio-player-status">Ready to review</span>
       </div>
-      <p className="audio-player-subtitle">Play the uploaded file to confirm sound quality before transcription.</p>
+      <p className="audio-player-subtitle">Play the uploaded meeting recording audio to confirm sound quality before transcription.</p>
 
       <audio ref={audioRef} src={audioUrl} preload="metadata" />
 
@@ -1549,8 +1549,8 @@ function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcrip
     <div className="transcribe-tab">
       <div className="transcribe-header">
         <div>
-          <h1 className="tab-title">Transcribe audio</h1>
-          <p className="tab-subtitle">A dedicated transcript generation tab with visible file context, customizable options, and progress feedback.</p>
+          <h1 className="tab-title">Transcribe meeting recording</h1>
+          <p className="tab-subtitle">A dedicated transcript generation tab for meeting recordings with visible file context, customizable options, and progress feedback.</p>
         </div>
         {files.transcript && (
           <span className="transcript-ready-badge">Transcript ready state</span>
@@ -1562,8 +1562,8 @@ function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcrip
           {!files.audio ? (
             <div className="empty-state">
               <div className="empty-icon">📁</div>
-              <h3>No audio file uploaded</h3>
-              <p>Please upload an audio file first to generate a transcript</p>
+              <h3>No meeting recording uploaded</h3>
+              <p>Please upload a meeting recording first to generate a transcript</p>
             </div>
           ) : (
             <>
@@ -1573,11 +1573,11 @@ function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcrip
             <div className="file-card-info">
               <div className="file-card-name">{files.originalFilename || files.audio.split('/').pop()}</div>
               <div className="file-card-meta">
-                Uploaded today • {getAudioDuration()} • Audio file validated
+                Uploaded today • {getAudioDuration()} • Meeting recording ready for transcription
               </div>
             </div>
             {files.audio && (
-              <span className="file-card-badge">Audio ✓</span>
+              <span className="file-card-badge">Recording ✓</span>
             )}
           </div>
 
@@ -1709,7 +1709,7 @@ function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcrip
               <p className="progress-section-message">
                 {transcribeJob.status === 'done' && transcribeJob.percent === 100
                   ? 'Transcription complete. Download the PDF or continue to the summary tab.'
-                  : transcribeJob.message || 'Processing your audio file...'}
+                  : transcribeJob.message || 'Processing your meeting recording...'}
               </p>
             </div>
           )}
@@ -1827,7 +1827,7 @@ function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType,
             <div className="empty-state">
               <div className="empty-icon">📝</div>
               <h3>No transcript available</h3>
-              <p>Please transcribe an audio file first to generate a summary</p>
+              <p>Please transcribe a meeting recording first to generate a summary</p>
             </div>
           ) : (
             <>
