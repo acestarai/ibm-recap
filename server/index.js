@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { spawn } from 'child_process';
 import mime from 'mime-types';
 import multer from 'multer';
@@ -33,6 +34,8 @@ const MIC = process.env.MIC || 'MacBook Air Microphone';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
 const OPENAI_SUMMARY_MODEL = process.env.OPENAI_SUMMARY_MODEL || 'gpt-4o';
+const OPENAI_RAG_MODEL = process.env.OPENAI_RAG_MODEL || 'gpt-5.2-chat-latest';
+const OPENAI_EMBEDDING_MODEL = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-large';
 
 // OpenRouter configuration (fallback)
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
@@ -248,13 +251,19 @@ function isMissingRelation(error, relationName) {
     || new RegExp(`Could not find the table ['"]${relationName}['"]`, 'i').test(errorText);
 }
 
-async function insertFileRecord(payload) {
+async function insertFileRecord(payload, options = {}) {
   const insertPayload = { ...payload };
+  const { returning = false } = options;
 
   while (true) {
-    const { error } = await supabase.from('files').insert(insertPayload);
+    let query = supabase.from('files').insert(insertPayload);
+    if (returning) {
+      query = query.select('*').single();
+    }
+
+    const { data, error } = await query;
     if (!error) {
-      return true;
+      return returning ? data : true;
     }
 
     const missingColumn = extractMissingColumnName(error);
@@ -413,6 +422,820 @@ function formatBytes(bytes) {
   return `${(numericBytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+function tokenizeQuery(text) {
+  return Array.from(new Set(
+    String(text || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 3)
+  ));
+}
+
+function normalizeSearchText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractQueryPhrases(text) {
+  const normalized = normalizeSearchText(text);
+  if (!normalized) return [];
+
+  const quoted = Array.from(String(text || '').matchAll(/"([^"]+)"/g))
+    .map((match) => normalizeSearchText(match[1]))
+    .filter((phrase) => phrase.split(' ').length >= 2);
+
+  const tokens = normalized.split(' ').filter(Boolean);
+  const phrases = new Set(quoted);
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    for (let size = 2; size <= 4; size += 1) {
+      const slice = tokens.slice(index, index + size);
+      if (slice.length === size) {
+        const phrase = slice.join(' ');
+        if (phrase.length >= 8) {
+          phrases.add(phrase);
+        }
+      }
+    }
+  }
+
+  return Array.from(phrases).slice(0, 12);
+}
+
+function splitTextIntoChunks(content, linesPerChunk = 12, overlapLines = 3) {
+  const lines = String(content || '').split('\n');
+  const chunks = [];
+  const step = Math.max(1, linesPerChunk - overlapLines);
+
+  for (let index = 0; index < lines.length; index += step) {
+    const slice = lines.slice(index, index + linesPerChunk);
+    const text = slice.join('\n').trim();
+    if (!text) continue;
+
+    chunks.push({
+      startLine: index + 1,
+      endLine: index + slice.length,
+      text
+    });
+  }
+
+  return chunks;
+}
+
+function scoreChunkAgainstTokens(chunkText, queryTokens, queryPhrases = [], rawQuestion = '') {
+  if (!queryTokens.length && !queryPhrases.length) return 0;
+
+  const haystack = normalizeSearchText(chunkText);
+  if (!haystack) return 0;
+
+  let score = 0;
+  let tokenHits = 0;
+
+  queryTokens.forEach((token) => {
+    if (!haystack.includes(token)) return;
+    const occurrences = haystack.split(token).length - 1;
+    tokenHits += 1;
+    score += Math.min(occurrences, 3) * 2;
+  });
+
+  queryPhrases.forEach((phrase) => {
+    if (haystack.includes(phrase)) {
+      score += phrase.split(' ').length >= 3 ? 8 : 5;
+    }
+  });
+
+  const normalizedQuestion = normalizeSearchText(rawQuestion);
+  if (normalizedQuestion && normalizedQuestion.length >= 10 && haystack.includes(normalizedQuestion)) {
+    score += 10;
+  }
+
+  if (tokenHits >= Math.max(2, Math.ceil(queryTokens.length / 2))) {
+    score += 4;
+  }
+
+  return score;
+}
+
+function scoreSingleLineAgainstQuery(lineText, queryTokens, queryPhrases = [], rawQuestion = '') {
+  const normalizedLine = normalizeSearchText(lineText);
+  if (!normalizedLine) return 0;
+
+  let score = 0;
+  queryTokens.forEach((token) => {
+    if (normalizedLine.includes(token)) {
+      score += 2;
+    }
+  });
+
+  queryPhrases.forEach((phrase) => {
+    if (normalizedLine.includes(phrase)) {
+      score += phrase.split(' ').length >= 3 ? 7 : 4;
+    }
+  });
+
+  const normalizedQuestion = normalizeSearchText(rawQuestion);
+  if (normalizedQuestion && normalizedQuestion.length >= 10 && normalizedLine.includes(normalizedQuestion)) {
+    score += 8;
+  }
+
+  return score;
+}
+
+function refineChunkToRelevantLines(chunk, queryTokens, queryPhrases = [], rawQuestion = '') {
+  const lines = String(chunk?.text || '').split('\n');
+  if (!lines.length) {
+    return {
+      startLine: chunk.startLine,
+      endLine: chunk.endLine,
+      snippet: chunk.text
+    };
+  }
+
+  const scoredLines = lines.map((line, index) => ({
+    index,
+    line,
+    score: scoreSingleLineAgainstQuery(line, queryTokens, queryPhrases, rawQuestion)
+  }));
+
+  const bestLine = scoredLines.reduce((best, current) => (
+    current.score > best.score ? current : best
+  ), scoredLines[0]);
+
+  if (!bestLine || bestLine.score <= 0) {
+    return {
+      startLine: chunk.startLine,
+      endLine: chunk.endLine,
+      snippet: chunk.text
+    };
+  }
+
+  const windowStart = Math.max(0, bestLine.index - 1);
+  const windowEnd = Math.min(lines.length - 1, bestLine.index + 1);
+  const snippetLines = lines.slice(windowStart, windowEnd + 1).filter((line) => line.trim());
+
+  return {
+    startLine: chunk.startLine + windowStart,
+    endLine: chunk.startLine + windowEnd,
+    snippet: snippetLines.join('\n').trim() || chunk.text
+  };
+}
+
+function buildCitationDedupeKey(citation) {
+  return [
+    citation.pageNumber || 'na',
+    citation.startLine || 'na',
+    citation.endLine || 'na',
+    normalizeSearchText(citation.snippet || '').slice(0, 120)
+  ].join(':');
+}
+
+function citationsOverlap(a, b) {
+  return (
+    a.fileId === b.fileId &&
+    a.pageNumber === b.pageNumber &&
+    Number(a.startLine || 0) <= Number(b.endLine || 0) &&
+    Number(b.startLine || 0) <= Number(a.endLine || 0)
+  );
+}
+
+function collapseOverlappingCitations(chunks) {
+  return chunks.reduce((accumulator, chunk) => {
+    const existingIndex = accumulator.findIndex((entry) => citationsOverlap(entry, chunk));
+    if (existingIndex === -1) {
+      accumulator.push(chunk);
+      return accumulator;
+    }
+
+    const existing = accumulator[existingIndex];
+    if ((chunk.score || 0) > (existing.score || 0)) {
+      accumulator[existingIndex] = chunk;
+    }
+    return accumulator;
+  }, []);
+}
+
+function estimateCitationPageNumber(fileType, startLine) {
+  const linesPerPage = fileType === 'summary' ? 28 : 38;
+  return Math.max(1, Math.ceil(Number(startLine || 1) / linesPerPage));
+}
+
+async function readStoredTextArtifact(file) {
+  if (!file?.storage_path) {
+    throw new Error('Stored text artifact is missing a storage path.');
+  }
+
+  const bucket = file.file_type === 'transcript' ? 'transcripts' : 'summaries';
+  const localExt = file.file_type === 'transcript' ? '.txt' : '.md';
+  const tempPath = path.join(OUTPUT_DIR, `ask-recap-${Date.now()}-${Math.random().toString(36).slice(2)}${localExt}`);
+
+  try {
+    await downloadFile(bucket, file.storage_path, tempPath);
+    return fs.readFileSync(tempPath, 'utf8');
+  } finally {
+    if (fs.existsSync(tempPath)) {
+      try {
+        fs.unlinkSync(tempPath);
+      } catch (cleanupError) {
+        console.error('Failed to clean up Ask Recap temp artifact:', cleanupError);
+      }
+    }
+  }
+}
+
+async function generateAskRecapAnswer({ question, citations }) {
+  const citationBlocks = citations.map((citation, index) => {
+    const citationId = index + 1;
+    return `(${citationId}) Meeting: ${citation.meetingTitle}\nDocument: ${citation.documentLabel}\nReference: ${citation.lineRef}${citation.pageNumber ? `, Page ${citation.pageNumber}` : ''}\nExcerpt:\n${citation.snippet}`;
+  }).join('\n\n');
+
+  const systemPrompt = `You are Ask Recap, an internal IBM meeting knowledge assistant. Answer the user's question using only the provided citations. Prefer the most specific evidence that directly answers the question. Do not infer details that are not stated in the excerpts. Keep the answer concise, clear, and practical. Do not include citation numbers, timestamps, bracketed references, or source formatting in the answer. If the citations are insufficient or conflicting, say what is uncertain instead of inventing details.`;
+  const userPrompt = `QUESTION:\n${question}\n\nCITATIONS:\n${citationBlocks}`;
+
+  if (openai) {
+    const response = await openai.chat.completions.create({
+      model: OPENAI_RAG_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ]
+    });
+    return (response.choices[0]?.message?.content || '').trim();
+  }
+
+  if (openrouter) {
+    const response = await openrouter.chat.completions.create({
+      model: OPENROUTER_SUMMARY_MODEL,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ]
+    });
+    return (response.choices[0]?.message?.content || '').trim();
+  }
+
+  return `I found ${citations.length} relevant source excerpt${citations.length === 1 ? '' : 's'} for your question, but no language model is configured to synthesize them yet. Review the attached citations to continue.`;
+}
+
+async function generateAskRecapContextualAnswer({ question, citations, conversationHistory = [], meetingMetadata = [], structuredInsights = [] }) {
+  const citationBlocks = citations.map((citation, index) => {
+    const citationId = index + 1;
+    return `(${citationId}) Meeting: ${citation.meetingTitle}\nDocument: ${citation.documentLabel}\nReference: ${citation.lineRef}${citation.pageNumber ? `, Page ${citation.pageNumber}` : ''}\nExcerpt:\n${citation.snippet}`;
+  }).join('\n\n');
+
+  const historyBlock = conversationHistory.length
+    ? conversationHistory.map((message) => `${message.role === 'assistant' ? 'ASK RECAP' : 'USER'}: ${message.content}`).join('\n')
+    : 'No prior conversation context.';
+
+  const metadataBlock = meetingMetadata.length
+    ? meetingMetadata.map((meeting, index) => {
+        const parts = [
+          `(${index + 1}) Title: ${meeting.title || 'Untitled meeting'}`,
+          meeting.meeting_start_at ? `Date: ${meeting.meeting_start_at}` : null,
+          meeting.organizer_name ? `Organizer: ${meeting.organizer_name}` : null,
+          meeting.attendee_summary ? `Attendees: ${meeting.attendee_summary}` : null,
+          meeting.notes ? `Notes: ${meeting.notes}` : null,
+          meeting.processing_status ? `Status: ${meeting.processing_status}` : null
+        ].filter(Boolean);
+        return parts.join('\n');
+      }).join('\n\n')
+    : 'No additional meeting metadata available.';
+
+  const insightsBlock = structuredInsights.length
+    ? structuredInsights.map((insight, index) => (
+        `(${index + 1}) [${insight.insight_type}] ${insight.content}${insight.meeting_title ? ` — Meeting: ${insight.meeting_title}` : ''}`
+      )).join('\n')
+    : 'No structured insights available.';
+
+  const systemPrompt = `You are Ask Recap, an internal IBM meeting knowledge assistant. Answer the user's question using the provided conversation context, meeting metadata, structured insights, and retrieved evidence. Prefer structured insights when the question is about action items, blockers, risks, open questions, decisions, or meeting duration. Prefer the most specific evidence that directly answers the question. Use prior conversation only to resolve follow-up references and pronouns, not to invent facts. Use meeting metadata when it helps identify the relevant meeting, organizer, attendees, date, notes, or status. Do not include citation numbers, timestamps, bracketed references, or source formatting in the answer. Do not use markdown syntax such as # headings, **bold**, * bullets, or backticks. When structure helps, use plain numbered lists, plain bullet lines, and short readable paragraphs only. Keep the answer concise, clear, and practical. If the available context is insufficient or conflicting, say what is uncertain instead of inventing details.`;
+  const userPrompt = `CONVERSATION HISTORY:\n${historyBlock}\n\nMEETING METADATA:\n${metadataBlock}\n\nSTRUCTURED INSIGHTS:\n${insightsBlock}\n\nQUESTION:\n${question}\n\nRETRIEVED EVIDENCE:\n${citationBlocks}`;
+
+  if (openai) {
+    const response = await openai.chat.completions.create({
+      model: OPENAI_RAG_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ]
+    });
+    return (response.choices[0]?.message?.content || '').trim();
+  }
+
+  return generateAskRecapAnswer({ question, citations });
+}
+
+function fallbackAskRecapChatTitle(question, answer = '') {
+  const source = normalizeSearchText(`${question} ${answer}`) || normalizeSearchText(question);
+  const stopwords = new Set(['what', 'were', 'there', 'from', 'about', 'with', 'that', 'this', 'have', 'been', 'into', 'your', 'their', 'they', 'them', 'would', 'could', 'should', 'which', 'where', 'when', 'who', 'whom', 'will', 'were', 'was', 'does', 'did', 'is', 'are', 'the', 'and', 'for', 'any']);
+  const tokens = source
+    .split(' ')
+    .filter((token) => token && token.length > 2 && !stopwords.has(token))
+    .slice(0, 5);
+
+  if (!tokens.length) {
+    return 'Ask Recap follow-up';
+  }
+
+  return tokens
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+    .join(' ')
+    .slice(0, 48);
+}
+
+async function generateAskRecapChatTitle({ question, answer }) {
+  if (openai) {
+    try {
+      const response = await openai.chat.completions.create({
+        model: OPENAI_RAG_MODEL,
+        messages: [
+          {
+            role: 'system',
+            content: 'Write a short chat title for this conversation topic. Use 3 to 6 words. No quotation marks. No punctuation unless essential. Prefer a concise theme label over repeating the full question.'
+          },
+          {
+            role: 'user',
+            content: `Question: ${question}\nAnswer: ${answer}`
+          }
+        ]
+      });
+      const title = String(response.choices[0]?.message?.content || '').trim().replace(/^["']|["']$/g, '');
+      if (title) {
+        return title.slice(0, 60);
+      }
+    } catch (error) {
+      console.error('Failed to generate Ask Recap chat title with OpenAI:', error);
+    }
+  }
+
+  return fallbackAskRecapChatTitle(question, answer);
+}
+
+function buildMeetingMetadataSearchText(meeting) {
+  return [
+    meeting.title,
+    meeting.organizer_name,
+    meeting.attendee_summary,
+    meeting.notes,
+    meeting.external_meeting_url,
+    meeting.processing_status,
+    meeting.meeting_start_at
+  ].filter(Boolean).join('\n');
+}
+
+function extractQuestionDateHints(question) {
+  const text = String(question || '');
+  const hints = new Set();
+
+  Array.from(text.matchAll(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/g)).forEach((match) => {
+    const month = Number(match[1]);
+    const day = Number(match[2]);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      hints.add(`${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+    }
+  });
+
+  const monthMap = {
+    january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+    july: 7, august: 8, september: 9, october: 10, november: 11, december: 12
+  };
+  const longMonthRegex = /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})\b/gi;
+  Array.from(text.matchAll(longMonthRegex)).forEach((match) => {
+    const month = monthMap[String(match[1]).toLowerCase()];
+    const day = Number(match[2]);
+    if (month && day >= 1 && day <= 31) {
+      hints.add(`${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+    }
+  });
+
+  return Array.from(hints);
+}
+
+function getMeetingDateHintValue(meeting) {
+  if (!meeting?.meeting_start_at) return null;
+  const date = new Date(meeting.meeting_start_at);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function resolveFocusedMeetingIds(question, candidateMeetings, selectedMeetingIds = []) {
+  if (Array.isArray(selectedMeetingIds) && selectedMeetingIds.length > 0) {
+    return selectedMeetingIds;
+  }
+
+  const normalizedQuestion = normalizeSearchText(question);
+  const dateHints = extractQuestionDateHints(question);
+  const matches = new Set();
+
+  (candidateMeetings || []).forEach((meeting) => {
+    const normalizedTitle = normalizeSearchText(meeting.title);
+    const meetingDateHint = getMeetingDateHintValue(meeting);
+    if (meetingDateHint && dateHints.includes(meetingDateHint)) {
+      matches.add(meeting.id);
+      return;
+    }
+
+    if (normalizedTitle && normalizedQuestion && (
+      normalizedQuestion.includes(normalizedTitle) ||
+      normalizedTitle.split(' ').filter(Boolean).length >= 3 && normalizedTitle.split(' ').every((token) => normalizedQuestion.includes(token))
+    )) {
+      matches.add(meeting.id);
+    }
+  });
+
+  return Array.from(matches);
+}
+
+function cleanInsightText(text) {
+  return String(text || '')
+    .replace(/^\s*[-*]\s+/, '')
+    .replace(/^\s*\d+\.\s+/, '')
+    .replace(/\*\*/g, '')
+    .trim();
+}
+
+function normalizeSummaryHeading(line) {
+  return cleanInsightText(
+    String(line || '')
+      .replace(/^#{1,6}\s*/, '')
+      .replace(/:$/, '')
+  )
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function extractStructuredInsightsFromSummary(summary) {
+  const headingMap = [
+    { type: 'action_item', aliases: ['action items'] },
+    { type: 'open_question', aliases: ['open questions', 'open questions that need resolution'] },
+    { type: 'risk_blocker', aliases: ['risks blockers', 'risks and blockers', 'risks and blockers identified', 'risks blockers identified', 'risks blockers identified'] },
+    { type: 'decision', aliases: ['decisions made'] },
+    { type: 'discussion_point', aliases: ['key discussion points'] }
+  ];
+
+  const insights = [];
+  let currentType = null;
+
+  String(summary || '').split('\n').forEach((rawLine) => {
+    const trimmed = rawLine.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const isListItem = /^[-*]\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed) || /^•\s+/.test(trimmed);
+    const normalizedHeading = normalizeSummaryHeading(trimmed);
+    const headingEntry = !isListItem
+      ? headingMap.find((entry) => entry.aliases.includes(normalizedHeading))
+      : null;
+
+    if (headingEntry) {
+      currentType = headingEntry.type;
+      return;
+    }
+
+    if (!currentType || !isListItem) {
+      return;
+    }
+
+    const content = cleanInsightText(trimmed);
+    if (!content || content.toLowerCase() === 'none captured.') {
+      return;
+    }
+
+    insights.push({
+      insight_type: currentType,
+      content
+    });
+  });
+
+  return insights;
+}
+
+function extractTranscriptDurationSeconds(transcript) {
+  const timestamps = Array.from(String(transcript || '').matchAll(/\[(\d{2}):(\d{2}):(\d{2})\]/g));
+  if (!timestamps.length) return null;
+  const last = timestamps[timestamps.length - 1];
+  const hours = Number(last[1] || 0);
+  const minutes = Number(last[2] || 0);
+  const seconds = Number(last[3] || 0);
+  return (hours * 3600) + (minutes * 60) + seconds;
+}
+
+async function syncMeetingInsights(userId, meetingId, meetingTitle, summary) {
+  if (!userId || userId === 'anonymous' || !meetingId) {
+    return;
+  }
+
+  const insights = extractStructuredInsightsFromSummary(summary);
+  await supabase.from('meeting_insights').delete().eq('meeting_id', meetingId).eq('user_id', userId);
+
+  if (!insights.length) {
+    return;
+  }
+
+  const rows = insights.map((insight) => ({
+    user_id: userId,
+    meeting_id: meetingId,
+    meeting_title: meetingTitle || 'Untitled meeting',
+    insight_type: insight.insight_type,
+    content: insight.content
+  }));
+
+  const { error } = await supabase.from('meeting_insights').insert(rows);
+  if (error) {
+    throw error;
+  }
+}
+
+function stripAskRecapAnswerArtifacts(answer) {
+  return String(answer || '')
+    .replace(/\((\d+(?:\s*,\s*\d+)*)\)/g, '')
+    .replace(/\[\d+(?:\s*,\s*\d+)*\]/g, '')
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, '')
+    .replace(/\b\d{1,2}m\s+\d{1,2}s\b/gi, '')
+    .replace(/\b\d{1,2}s\b/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function filterAndRenumberCitations(answer, citations) {
+  return {
+    answer: stripAskRecapAnswerArtifacts(answer),
+    citations: []
+  };
+}
+
+function detectInsightIntent(question) {
+  const normalized = normalizeSearchText(question);
+  if (!normalized) return null;
+
+  if (normalized.includes('open question') || normalized.includes('unresolved question')) {
+    return 'open_question';
+  }
+  if (normalized.includes('risk') || normalized.includes('blocker') || normalized.includes('impediment')) {
+    return 'risk_blocker';
+  }
+  if (normalized.includes('action item') || normalized.includes('next step') || normalized.includes('follow up')) {
+    return 'action_item';
+  }
+  if (normalized.includes('decision')) {
+    return 'decision';
+  }
+  return null;
+}
+
+function buildInsightFirstAnswer(insightType, insights) {
+  if (!insights.length) {
+    return null;
+  }
+
+  const introByType = {
+    open_question: 'Here are the open questions captured from the meeting:',
+    risk_blocker: 'Here are the risks and blockers captured from the meeting:',
+    action_item: 'Here are the action items captured from the meeting:',
+    decision: 'Here are the decisions captured from the meeting:'
+  };
+
+  const intro = introByType[insightType] || 'Here are the relevant items captured from the meeting:';
+  const lines = insights.slice(0, 8).map((insight, index) => `${index + 1}. ${cleanInsightText(insight.content)}`);
+  return `${intro}\n\n${lines.join('\n')}`;
+}
+
+function createAskRecapChunkHash(fileId, startLine, endLine, text) {
+  return crypto
+    .createHash('sha256')
+    .update(`${fileId}:${startLine}:${endLine}:${text}`)
+    .digest('hex');
+}
+
+async function createEmbeddingVector(text) {
+  if (!openai) {
+    throw new Error('OpenAI is required for vector retrieval embeddings.');
+  }
+
+  const response = await openai.embeddings.create({
+    model: OPENAI_EMBEDDING_MODEL,
+    input: text
+  });
+
+  return response.data?.[0]?.embedding || [];
+}
+
+function cosineSimilarity(vectorA, vectorB) {
+  if (!Array.isArray(vectorA) || !Array.isArray(vectorB) || vectorA.length === 0 || vectorB.length === 0) {
+    return 0;
+  }
+
+  const length = Math.min(vectorA.length, vectorB.length);
+  let dot = 0;
+  let magnitudeA = 0;
+  let magnitudeB = 0;
+
+  for (let index = 0; index < length; index += 1) {
+    const a = Number(vectorA[index] || 0);
+    const b = Number(vectorB[index] || 0);
+    dot += a * b;
+    magnitudeA += a * a;
+    magnitudeB += b * b;
+  }
+
+  if (!magnitudeA || !magnitudeB) {
+    return 0;
+  }
+
+  return dot / (Math.sqrt(magnitudeA) * Math.sqrt(magnitudeB));
+}
+
+async function ensureAskRecapChunksIndexed(files, meetingTitleById) {
+  if (!files.length || !openai) {
+    return [];
+  }
+
+  const fileIds = files.map((file) => file.id);
+  const { data: existingRows, error: existingError } = await supabase
+    .from('ask_recap_chunks')
+    .select('file_id, content_hash')
+    .in('file_id', fileIds);
+
+  if (existingError) {
+    throw existingError;
+  }
+
+  const existingHashesByFile = new Map();
+  (existingRows || []).forEach((row) => {
+    const hashes = existingHashesByFile.get(row.file_id) || new Set();
+    hashes.add(row.content_hash);
+    existingHashesByFile.set(row.file_id, hashes);
+  });
+
+  const rowsToInsert = [];
+
+  for (const file of files) {
+    if (!file.storage_path) continue;
+
+    let content = '';
+    try {
+      content = await readStoredTextArtifact(file);
+    } catch (artifactError) {
+      console.error('Failed to read Ask Recap source artifact for indexing:', artifactError);
+      continue;
+    }
+
+    const chunks = splitTextIntoChunks(
+      content,
+      file.file_type === 'summary' ? 8 : 10,
+      file.file_type === 'summary' ? 2 : 3
+    );
+    const existingHashes = existingHashesByFile.get(file.id) || new Set();
+
+    for (const chunk of chunks) {
+      const contentHash = createAskRecapChunkHash(file.id, chunk.startLine, chunk.endLine, chunk.text);
+      if (existingHashes.has(contentHash)) {
+        continue;
+      }
+
+      const embedding = await createEmbeddingVector(chunk.text);
+      rowsToInsert.push({
+        user_id: file.user_id,
+        file_id: file.id,
+        meeting_id: file.meeting_id || null,
+        file_type: file.file_type,
+        meeting_title: meetingTitleById.get(file.meeting_id) || deriveMeetingTitle(file.original_filename),
+        document_label: file.original_filename || `${file.file_type}-${file.id}`,
+        start_line: chunk.startLine,
+        end_line: chunk.endLine,
+        page_number: estimateCitationPageNumber(file.file_type, chunk.startLine),
+        chunk_text: chunk.text,
+        content_hash: contentHash,
+        embedding
+      });
+    }
+  }
+
+  if (!rowsToInsert.length) {
+    return existingRows || [];
+  }
+
+  const { error: insertError } = await supabase
+    .from('ask_recap_chunks')
+    .insert(rowsToInsert);
+
+  if (insertError) {
+    throw insertError;
+  }
+
+  const { data: refreshedRows, error: refreshError } = await supabase
+    .from('ask_recap_chunks')
+    .select('*')
+    .in('file_id', fileIds);
+
+  if (refreshError) {
+    throw refreshError;
+  }
+
+  return refreshedRows || [];
+}
+
+function getAskRecapDateThreshold(dateRange) {
+  const normalized = sanitizeOptionalString(dateRange) || 'all';
+  if (normalized === 'all') {
+    return null;
+  }
+
+  const now = new Date();
+  const threshold = new Date(now);
+  if (normalized === '7d') {
+    threshold.setDate(now.getDate() - 7);
+    return threshold.toISOString();
+  }
+  if (normalized === '30d') {
+    threshold.setDate(now.getDate() - 30);
+    return threshold.toISOString();
+  }
+  if (normalized === '90d') {
+    threshold.setDate(now.getDate() - 90);
+    return threshold.toISOString();
+  }
+
+  return null;
+}
+
+function buildAskRecapScopeLabel({ selectedMeetingIds = [], dateRange = 'all' } = {}) {
+  if (Array.isArray(selectedMeetingIds) && selectedMeetingIds.length > 0) {
+    return 'meeting';
+  }
+  return sanitizeOptionalString(dateRange) || 'all';
+}
+
+async function backfillAskRecapKnowledge(userId) {
+  if (!userId || userId === 'anonymous') {
+    return { indexedFiles: 0, refreshedSummaries: 0 };
+  }
+
+  const { data: files, error: filesError } = await supabase
+    .from('files')
+    .select('id, user_id, meeting_id, file_type, storage_path, original_filename, created_at')
+    .eq('user_id', userId)
+    .in('file_type', ['transcript', 'summary'])
+    .order('created_at', { ascending: false })
+    .limit(120);
+
+  if (filesError) {
+    throw filesError;
+  }
+
+  const candidateFiles = files || [];
+  const meetingIds = [...new Set(candidateFiles.map((file) => file.meeting_id).filter(Boolean))];
+  const meetingTitleById = new Map();
+
+  if (meetingIds.length > 0) {
+    const { data: meetings, error: meetingsError } = await supabase
+      .from('meetings')
+      .select('id, title')
+      .eq('user_id', userId)
+      .in('id', meetingIds);
+
+    if (meetingsError) {
+      throw meetingsError;
+    }
+
+    (meetings || []).forEach((meeting) => {
+      meetingTitleById.set(meeting.id, meeting.title || 'Untitled meeting');
+    });
+  }
+
+  let refreshedSummaries = 0;
+  const summaryFiles = candidateFiles.filter((file) => file.file_type === 'summary' && file.storage_path && file.meeting_id);
+  for (const summaryFile of summaryFiles) {
+    try {
+      const summaryText = await readStoredTextArtifact(summaryFile);
+      await syncMeetingInsights(
+        userId,
+        summaryFile.meeting_id,
+        meetingTitleById.get(summaryFile.meeting_id) || deriveMeetingTitle(summaryFile.original_filename),
+        summaryText
+      );
+      refreshedSummaries += 1;
+    } catch (error) {
+      console.error('Failed to backfill structured meeting insights:', error);
+    }
+  }
+
+  await ensureAskRecapChunksIndexed(candidateFiles, meetingTitleById);
+
+  return {
+    indexedFiles: candidateFiles.length,
+    refreshedSummaries
+  };
+}
+
 async function convertMp4ToMp3(inputPath, outputPath) {
   await runProcess('ffmpeg', [
     '-y',
@@ -422,6 +1245,56 @@ async function convertMp4ToMp3(inputPath, outputPath) {
     '-b:a', '128k',
     outputPath,
   ]);
+}
+
+const MAX_TRANSCRIPTION_PAYLOAD_BYTES = 24 * 1024 * 1024;
+
+async function createTranscriptionSizedAudio(inputPath) {
+  const sizedPath = path.join(
+    OUTPUT_DIR,
+    `transcribe-sized-${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`
+  );
+
+  await runProcess('ffmpeg', [
+    '-y',
+    '-i', inputPath,
+    '-ac', '1',
+    '-ar', '16000',
+    '-c:a', 'libmp3lame',
+    '-b:a', '64k',
+    sizedPath,
+  ]);
+
+  return sizedPath;
+}
+
+async function getTranscriptionInputPath(audioPath) {
+  const originalSize = fs.statSync(audioPath).size;
+  if (originalSize <= MAX_TRANSCRIPTION_PAYLOAD_BYTES) {
+    return {
+      path: audioPath,
+      optimized: false,
+      sizeBytes: originalSize,
+      cleanup: null
+    };
+  }
+
+  const sizedPath = await createTranscriptionSizedAudio(audioPath);
+  const sizedSize = fs.statSync(sizedPath).size;
+  return {
+    path: sizedPath,
+    optimized: true,
+    sizeBytes: sizedSize,
+    cleanup: () => {
+      if (fs.existsSync(sizedPath)) {
+        try {
+          fs.unlinkSync(sizedPath);
+        } catch (cleanupError) {
+          console.error('Failed to clean up optimized transcription audio:', cleanupError);
+        }
+      }
+    }
+  };
 }
 
 async function cleanupTemporaryAudio(userId, meta) {
@@ -1059,6 +1932,7 @@ app.post('/api/transcribe', optionalAuthenticate, async (req, res) => {
     const job = createJob('transcribe');
 
     (async () => {
+      let transcriptionInput = null;
       try {
         if (userId !== 'anonymous' && meta.originalFilename) {
           await updateMeetingRecord(meetingId, {
@@ -1098,6 +1972,13 @@ app.post('/api/transcribe', optionalAuthenticate, async (req, res) => {
         
         // Track if AssemblyAI succeeded
         let assemblyAISucceeded = false;
+        transcriptionInput = await getTranscriptionInputPath(audioPath);
+        if (transcriptionInput.optimized) {
+          updateJob(job.id, {
+            percent: 12,
+            message: `Optimizing large recording for transcription (${formatBytes(transcriptionInput.sizeBytes)} working copy)...`
+          });
+        }
         
         // Use AssemblyAI if speaker diarization is requested and AssemblyAI is configured
         if (transcriptOptions.speakerDiarization && assemblyai) {
@@ -1131,7 +2012,7 @@ app.post('/api/transcribe', optionalAuthenticate, async (req, res) => {
             updateJob(job.id, { percent: 15, message: 'Transcribing with OpenAI Whisper...' });
 
             const whisperParams = {
-              file: fs.createReadStream(audioPath),
+              file: fs.createReadStream(transcriptionInput.path),
               model: OPENAI_TRANSCRIBE_MODEL,
               response_format: 'verbose_json',
             };
@@ -1195,7 +2076,7 @@ app.post('/api/transcribe', optionalAuthenticate, async (req, res) => {
               updateJob(job.id, { percent: 30, message: 'Transcribing with OpenRouter Whisper...' });
               
               const transcription = await openrouter.audio.transcriptions.create({
-                file: fs.createReadStream(audioPath),
+                file: fs.createReadStream(transcriptionInput.path),
                 model: OPENROUTER_TRANSCRIBE_MODEL,
                 response_format: 'verbose_json',
               });
@@ -1270,7 +2151,7 @@ app.post('/api/transcribe', optionalAuthenticate, async (req, res) => {
           updateJob(job.id, { percent: 10, message: 'Transcribing with OpenRouter Whisper...' });
           
           const transcription = await openrouter.audio.transcriptions.create({
-            file: fs.createReadStream(audioPath),
+            file: fs.createReadStream(transcriptionInput.path),
             model: OPENROUTER_TRANSCRIBE_MODEL,
             response_format: 'verbose_json',
           });
@@ -1379,6 +2260,7 @@ app.post('/api/transcribe', optionalAuthenticate, async (req, res) => {
         pdfDoc.end();
         await new Promise((resolve) => pdfStream.on('finish', resolve));
         fs.writeFileSync(transcriptPath, `${lines.join('\n')}\n`, 'utf8');
+        const transcriptDurationSeconds = extractTranscriptDurationSeconds(lines.join('\n'));
         
         // Upload transcript to Supabase storage
         try {
@@ -1391,7 +2273,7 @@ app.post('/api/transcribe', optionalAuthenticate, async (req, res) => {
               const meta = readMeta();
               const sourceFilename = getSourceFilenameFromMeta(meta, transcriptPath);
               const fileStats = fs.statSync(transcriptPath);
-              await insertFileRecord({
+              const transcriptFileRecord = await insertFileRecord({
                 user_id: userId,
                 meeting_id: meetingId,
                 original_filename: sourceFilename || path.basename(transcriptPath),
@@ -1405,7 +2287,7 @@ app.post('/api/transcribe', optionalAuthenticate, async (req, res) => {
                 has_transcript: true,
                 has_summary: false,
                 speaker_diarization: !!transcriptOptions.speakerDiarization
-              });
+              }, { returning: true });
 
               if (sourceFilename) {
                 await updateFileRecords({
@@ -1421,8 +2303,15 @@ app.post('/api/transcribe', optionalAuthenticate, async (req, res) => {
               }
               await updateMeetingRecord(meetingId, {
                 processing_status: 'transcript_ready',
-                processing_error: null
+                processing_error: null,
+                ...(transcriptDurationSeconds ? { duration_seconds: transcriptDurationSeconds } : {})
               });
+              if (transcriptFileRecord) {
+                await ensureAskRecapChunksIndexed(
+                  [transcriptFileRecord],
+                  new Map([[meetingId, meetingContext?.title || sourceFilename || deriveMeetingTitle(transcriptFileRecord.original_filename)]])
+                );
+              }
               console.log('✅ Transcript metadata saved to database');
             } catch (dbError) {
               console.error('⚠️ Failed to save transcript metadata to database:', dbError);
@@ -1440,7 +2329,13 @@ app.post('/api/transcribe', optionalAuthenticate, async (req, res) => {
           message: 'Transcription complete.',
           result: { transcriptPath },
         });
+        if (transcriptionInput?.cleanup) {
+          transcriptionInput.cleanup();
+        }
       } catch (err) {
+        if (transcriptionInput?.cleanup) {
+          transcriptionInput.cleanup();
+        }
         logPipelineFailure('transcription', err, {
           userId,
           meetingId,
@@ -1636,7 +2531,7 @@ Rules:
               const sourceFilename = getSourceFilenameFromMeta(meta, summaryPath);
               const fileStats = fs.statSync(summaryPath);
               const actionItemsCount = (summary.match(/## Action items[\s\S]*?(?=##|$)/i)?.[0]?.match(/^[\s]*-/gm) || []).length;
-              await insertFileRecord({
+              const summaryFileRecord = await insertFileRecord({
                 user_id: userId,
                 meeting_id: meetingId,
                 original_filename: sourceFilename || path.basename(summaryPath),
@@ -1650,7 +2545,7 @@ Rules:
                 has_transcript: true,
                 has_summary: true,
                 action_items_count: actionItemsCount
-              });
+              }, { returning: true });
 
               if (sourceFilename) {
                 await updateFileRecords({
@@ -1668,6 +2563,13 @@ Rules:
                 processing_status: 'completed',
                 processing_error: null
               });
+              await syncMeetingInsights(userId, meetingId, meetingContext?.title || sourceFilename, summary);
+              if (summaryFileRecord) {
+                await ensureAskRecapChunksIndexed(
+                  [summaryFileRecord],
+                  new Map([[meetingId, meetingContext?.title || sourceFilename || deriveMeetingTitle(summaryFileRecord.original_filename)]])
+                );
+              }
               console.log('✅ Summary metadata saved to database');
             } catch (dbError) {
               console.error('⚠️ Failed to save summary metadata to database:', dbError);
@@ -2280,6 +3182,558 @@ app.get('/api/files/:id/pdf', authenticate, async (req, res) => {
     cleanup();
     console.error('Error generating PDF preview:', error);
     return res.status(500).json({ ok: false, error: 'Failed to generate PDF preview' });
+  }
+});
+
+app.post('/api/ask-recap/query', authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const question = sanitizeOptionalString(req.body?.question);
+    const scope = sanitizeOptionalString(req.body?.scope) || 'all';
+    const dateRange = sanitizeOptionalString(req.body?.dateRange) || 'all';
+    const recentMessages = Array.isArray(req.body?.recentMessages)
+      ? req.body.recentMessages
+          .filter((message) => message && (message.role === 'user' || message.role === 'assistant') && sanitizeOptionalString(message.content))
+          .slice(-6)
+          .map((message) => ({
+            role: message.role,
+            content: sanitizeOptionalString(message.content)
+          }))
+      : [];
+    const attachedRecentFileIds = Array.isArray(req.body?.attachedRecentFileIds)
+      ? req.body.attachedRecentFileIds.filter((value) => typeof value === 'string' && value.trim())
+      : [];
+    const selectedMeetingIds = Array.isArray(req.body?.selectedMeetingIds)
+      ? req.body.selectedMeetingIds.filter((value) => typeof value === 'string' && value.trim())
+      : [];
+    const dateThreshold = getAskRecapDateThreshold(dateRange);
+
+    if (!question) {
+      return res.status(400).json({ ok: false, error: 'Question is required.' });
+    }
+
+    let filesQuery = supabase
+      .from('files')
+      .select('id, user_id, meeting_id, file_type, storage_path, original_filename, created_at')
+      .eq('user_id', userId)
+      .in('file_type', ['transcript', 'summary'])
+      .order('created_at', { ascending: false })
+      .limit(80);
+
+    if (dateThreshold) {
+      filesQuery = filesQuery.gte('created_at', dateThreshold);
+    }
+
+    const { data: files, error: filesError } = await filesQuery;
+
+    if (filesError) {
+      throw filesError;
+    }
+
+    let candidateFiles = files || [];
+    if (attachedRecentFileIds.length > 0) {
+      candidateFiles = candidateFiles.filter((file) => attachedRecentFileIds.includes(file.id));
+    }
+
+    if (scope === 'meeting' || selectedMeetingIds.length > 0) {
+      if (selectedMeetingIds.length > 0) {
+        candidateFiles = candidateFiles.filter((file) => selectedMeetingIds.includes(file.meeting_id));
+      }
+    }
+
+    if (candidateFiles.length === 0) {
+      return res.json({
+        ok: true,
+        answer: 'I could not find any matching transcript or summary documents in the current Ask Recap scope yet.',
+        citations: [],
+        appliedScope: buildAskRecapScopeLabel({ selectedMeetingIds, dateRange })
+      });
+    }
+
+    const meetingIds = [...new Set(candidateFiles.map((file) => file.meeting_id).filter(Boolean))];
+    const meetingTitleById = new Map();
+    const meetingIdsToLoad = selectedMeetingIds.length > 0
+      ? selectedMeetingIds
+      : (meetingIds.length > 0 ? meetingIds : []);
+    let candidateMeetings = [];
+    if (meetingIdsToLoad.length > 0) {
+      const { data: meetings, error: meetingsError } = await supabase
+        .from('meetings')
+        .select('id, title, meeting_start_at, organizer_name, attendee_summary, external_meeting_url, notes, processing_status, created_at')
+        .eq('user_id', userId)
+        .in('id', meetingIdsToLoad);
+
+      if (meetingsError) {
+        throw meetingsError;
+      }
+
+      candidateMeetings = meetings || [];
+    } else {
+      let meetingsQuery = supabase
+        .from('meetings')
+        .select('id, title, meeting_start_at, organizer_name, attendee_summary, external_meeting_url, notes, processing_status, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(30);
+
+      if (dateThreshold) {
+        meetingsQuery = meetingsQuery.gte('created_at', dateThreshold);
+      }
+
+      const { data: meetings, error: meetingsError } = await meetingsQuery;
+
+      if (meetingsError) {
+        throw meetingsError;
+      }
+
+      candidateMeetings = meetings || [];
+    }
+
+    candidateMeetings.forEach((meeting) => {
+      meetingTitleById.set(meeting.id, meeting.title || 'Untitled meeting');
+    });
+
+    const focusedMeetingIds = resolveFocusedMeetingIds(question, candidateMeetings, selectedMeetingIds);
+    if (focusedMeetingIds.length > 0) {
+      candidateFiles = candidateFiles.filter((file) => focusedMeetingIds.includes(file.meeting_id));
+      candidateMeetings = candidateMeetings.filter((meeting) => focusedMeetingIds.includes(meeting.id));
+    }
+
+    const retrievalQuestion = [...recentMessages.filter((message) => message.role === 'user').map((message) => message.content), question]
+      .slice(-3)
+      .join('\n');
+    const queryTokens = tokenizeQuery(retrievalQuestion);
+    const queryPhrases = extractQueryPhrases(retrievalQuestion);
+    let scoredChunks = [];
+
+    const useVectorRetrieval = Boolean(openai);
+    if (useVectorRetrieval) {
+      try {
+        const indexedChunks = await ensureAskRecapChunksIndexed(candidateFiles, meetingTitleById);
+        const questionEmbedding = await createEmbeddingVector(retrievalQuestion);
+
+        scoredChunks = (indexedChunks || [])
+          .map((chunk) => {
+            const refined = refineChunkToRelevantLines({
+              startLine: chunk.start_line,
+              endLine: chunk.end_line,
+              text: chunk.chunk_text
+            }, queryTokens, queryPhrases, retrievalQuestion);
+            const keywordScore = scoreChunkAgainstTokens(chunk.chunk_text, queryTokens, queryPhrases, retrievalQuestion);
+            const vectorScore = cosineSimilarity(questionEmbedding, chunk.embedding || []);
+
+            return {
+              fileId: chunk.file_id,
+              meetingId: chunk.meeting_id || null,
+              meetingTitle: chunk.meeting_title || meetingTitleById.get(chunk.meeting_id) || 'Untitled meeting',
+              documentLabel: chunk.document_label || `chunk-${chunk.id}`,
+              fileType: chunk.file_type,
+              startLine: refined.startLine,
+              endLine: refined.endLine,
+              lineRef: `Lines ${refined.startLine}-${refined.endLine}`,
+              pageNumber: chunk.page_number || estimateCitationPageNumber(chunk.file_type, refined.startLine),
+              snippet: refined.snippet,
+              score: (vectorScore * 100) + keywordScore
+            };
+          })
+          .filter((chunk) => chunk.score > 0);
+      } catch (vectorError) {
+        console.error('Ask Recap vector retrieval unavailable, falling back to keyword retrieval:', vectorError);
+      }
+    }
+
+    if (!scoredChunks.length) {
+      for (const file of candidateFiles) {
+        if (!file.storage_path) continue;
+
+        let content = '';
+        try {
+          content = await readStoredTextArtifact(file);
+        } catch (artifactError) {
+          console.error('Failed to read Ask Recap source artifact:', artifactError);
+          continue;
+        }
+
+        const chunks = splitTextIntoChunks(
+          content,
+          file.file_type === 'summary' ? 8 : 10,
+          file.file_type === 'summary' ? 2 : 3
+        );
+        chunks.forEach((chunk) => {
+          const score = scoreChunkAgainstTokens(chunk.text, queryTokens, queryPhrases, retrievalQuestion);
+          if (score <= 0 && queryTokens.length > 0) return;
+          const refined = refineChunkToRelevantLines(chunk, queryTokens, queryPhrases, retrievalQuestion);
+
+          scoredChunks.push({
+            fileId: file.id,
+            meetingId: file.meeting_id || null,
+            meetingTitle: meetingTitleById.get(file.meeting_id) || deriveMeetingTitle(file.original_filename),
+            documentLabel: file.original_filename || `${file.file_type}-${file.id}`,
+            fileType: file.file_type,
+            startLine: refined.startLine,
+            endLine: refined.endLine,
+            lineRef: `Lines ${refined.startLine}-${refined.endLine}`,
+            pageNumber: estimateCitationPageNumber(file.file_type, refined.startLine),
+            snippet: refined.snippet,
+            score: score || 1
+          });
+        });
+      }
+    }
+
+    const selectedByFile = new Map();
+    const topChunks = collapseOverlappingCitations(
+      scoredChunks
+      .sort((a, b) => b.score - a.score)
+      .reduce((accumulator, chunk) => {
+        const dedupeKey = buildCitationDedupeKey(chunk);
+        if (accumulator.some((entry) => entry.dedupeKey === dedupeKey)) {
+          return accumulator;
+        }
+
+        const existingCount = selectedByFile.get(chunk.fileId) || 0;
+        if (existingCount >= 2) {
+          return accumulator;
+        }
+
+        selectedByFile.set(chunk.fileId, existingCount + 1);
+        accumulator.push({ ...chunk, dedupeKey });
+        return accumulator;
+      }, []))
+      .slice(0, 6)
+      .map((chunk, index) => ({
+        id: `${chunk.fileId}-${index}`,
+        citationNumber: index + 1,
+        fileId: chunk.fileId,
+        meetingId: chunk.meetingId,
+        meetingTitle: chunk.meetingTitle,
+        documentLabel: chunk.documentLabel,
+        startLine: chunk.startLine,
+        endLine: chunk.endLine,
+        lineRef: chunk.lineRef,
+        pageNumber: chunk.pageNumber,
+        snippet: chunk.snippet
+      }));
+
+    const topMeetingMetadata = candidateMeetings
+      .map((meeting) => ({
+        ...meeting,
+        metadataText: buildMeetingMetadataSearchText(meeting),
+        metadataScore: scoreChunkAgainstTokens(buildMeetingMetadataSearchText(meeting), queryTokens, queryPhrases, retrievalQuestion)
+          + (focusedMeetingIds.includes(meeting.id) ? 50 : 0)
+      }))
+      .filter((meeting) => meeting.metadataText)
+      .sort((a, b) => b.metadataScore - a.metadataScore)
+      .slice(0, 4)
+      .map(({ metadataText, metadataScore, ...meeting }) => meeting);
+
+    let structuredInsights = [];
+    try {
+      const insightMeetingIds = focusedMeetingIds.length > 0
+        ? focusedMeetingIds
+        : [...new Set(candidateMeetings.map((meeting) => meeting.id).filter(Boolean))];
+      let insightsQuery = supabase
+        .from('meeting_insights')
+        .select('meeting_id, meeting_title, insight_type, content, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(80);
+
+      if (insightMeetingIds.length > 0) {
+        insightsQuery = insightsQuery.in('meeting_id', insightMeetingIds);
+      }
+
+      const { data: insightRows, error: insightsError } = await insightsQuery;
+      if (insightsError) {
+        throw insightsError;
+      }
+
+      const directInsightIntent = detectInsightIntent(question);
+      structuredInsights = (insightRows || [])
+        .map((insight) => ({
+          ...insight,
+          score: scoreChunkAgainstTokens(insight.content, queryTokens, queryPhrases, retrievalQuestion)
+            + (focusedMeetingIds.includes(insight.meeting_id) ? 50 : 0)
+        }))
+        .filter((insight) => insight.score > 0 || directInsightIntent === insight.insight_type)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 8);
+    } catch (insightsError) {
+      console.error('Failed to load structured meeting insights for Ask Recap:', insightsError);
+    }
+
+    const insightIntent = detectInsightIntent(question);
+    if (insightIntent) {
+      const matchingInsights = structuredInsights.filter((insight) => insight.insight_type === insightIntent);
+      const insightFirstAnswer = buildInsightFirstAnswer(insightIntent, matchingInsights);
+      if (insightFirstAnswer) {
+        const suggestedTitle = await generateAskRecapChatTitle({
+          question,
+          answer: insightFirstAnswer
+        });
+        return res.json({
+          ok: true,
+          answer: stripAskRecapAnswerArtifacts(insightFirstAnswer),
+          citations: [],
+          suggestedTitle,
+          appliedScope: buildAskRecapScopeLabel({ selectedMeetingIds, dateRange })
+        });
+      }
+    }
+
+    if (topChunks.length === 0 && topMeetingMetadata.length === 0 && structuredInsights.length === 0) {
+      return res.json({
+        ok: true,
+        answer: 'I could not find enough transcript, summary, or meeting context to answer that yet. Try a more specific meeting name, organizer, attendee, or action item.',
+        citations: [],
+        appliedScope: buildAskRecapScopeLabel({ selectedMeetingIds, dateRange })
+      });
+    }
+
+    const rawAnswer = await generateAskRecapContextualAnswer({
+      question,
+      citations: topChunks,
+      conversationHistory: recentMessages,
+      meetingMetadata: topMeetingMetadata,
+      structuredInsights
+    });
+    const { answer, citations } = filterAndRenumberCitations(rawAnswer, topChunks);
+    const suggestedTitle = await generateAskRecapChatTitle({
+      question,
+      answer
+    });
+
+    return res.json({
+      ok: true,
+      answer,
+      citations,
+      suggestedTitle,
+      appliedScope: buildAskRecapScopeLabel({ selectedMeetingIds, dateRange })
+    });
+  } catch (error) {
+    console.error('Error in /api/ask-recap/query:', error);
+    return res.status(500).json({ ok: false, error: 'Ask Recap query failed.' });
+  }
+});
+
+app.get('/api/ask-recap/chats', authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { data: chats, error: chatsError } = await supabase
+      .from('ask_recap_chats')
+      .select('id, title, scope, created_at, updated_at')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false });
+
+    if (chatsError) {
+      throw chatsError;
+    }
+
+    const chatIds = (chats || []).map((chat) => chat.id);
+    let messages = [];
+    if (chatIds.length > 0) {
+      const { data: messageRows, error: messagesError } = await supabase
+        .from('ask_recap_messages')
+        .select('id, chat_id, role, content, sort_order, created_at')
+        .eq('user_id', userId)
+        .in('chat_id', chatIds)
+        .order('sort_order', { ascending: true });
+
+      if (messagesError) {
+        throw messagesError;
+      }
+
+      messages = messageRows || [];
+    }
+
+    const messagesByChat = messages.reduce((accumulator, message) => {
+      const chatMessages = accumulator[message.chat_id] || [];
+      chatMessages.push({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        status: 'complete',
+        citations: []
+      });
+      accumulator[message.chat_id] = chatMessages;
+      return accumulator;
+    }, {});
+
+    return res.json({
+      ok: true,
+      chats: (chats || []).map((chat) => ({
+        id: chat.id,
+        title: chat.title,
+        scope: chat.scope || 'all',
+        messageCount: (messagesByChat[chat.id] || []).length,
+        messages: messagesByChat[chat.id] || []
+      }))
+    });
+  } catch (error) {
+    console.error('Error loading Ask Recap chats:', error);
+    return res.status(500).json({ ok: false, error: 'Failed to load Ask Recap chats.' });
+  }
+});
+
+app.post('/api/ask-recap/backfill', authenticate, async (req, res) => {
+  try {
+    const result = await backfillAskRecapKnowledge(req.user.id);
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    console.error('Error backfilling Ask Recap knowledge:', error);
+    return res.status(500).json({ ok: false, error: 'Failed to optimize Ask Recap history.' });
+  }
+});
+
+app.post('/api/ask-recap/chats', authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const title = sanitizeOptionalString(req.body?.title) || 'New Ask Recap chat';
+    const scope = sanitizeOptionalString(req.body?.scope) || 'all';
+
+    const { data, error } = await supabase
+      .from('ask_recap_chats')
+      .insert({
+        user_id: userId,
+        title,
+        scope,
+        updated_at: new Date().toISOString()
+      })
+      .select('id, title, scope')
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return res.json({
+      ok: true,
+      chat: {
+        id: data.id,
+        title: data.title,
+        scope: data.scope,
+        messageCount: 0,
+        messages: []
+      }
+    });
+  } catch (error) {
+    console.error('Error creating Ask Recap chat:', error);
+    return res.status(500).json({ ok: false, error: 'Failed to create Ask Recap chat.' });
+  }
+});
+
+app.patch('/api/ask-recap/chats/:id', authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const chatId = req.params.id;
+    const title = sanitizeOptionalString(req.body?.title);
+
+    if (!title) {
+      return res.status(400).json({ ok: false, error: 'Title is required.' });
+    }
+
+    const { data, error } = await supabase
+      .from('ask_recap_chats')
+      .update({
+        title: title.slice(0, 80),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', chatId)
+      .eq('user_id', userId)
+      .select('id, title, scope')
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({ ok: false, error: 'Ask Recap chat not found.' });
+    }
+
+    return res.json({ ok: true, chat: data });
+  } catch (error) {
+    console.error('Error renaming Ask Recap chat:', error);
+    return res.status(500).json({ ok: false, error: 'Failed to rename Ask Recap chat.' });
+  }
+});
+
+app.put('/api/ask-recap/chats/:id', authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const chatId = req.params.id;
+    const title = sanitizeOptionalString(req.body?.title) || 'New Ask Recap chat';
+    const scope = sanitizeOptionalString(req.body?.scope) || 'all';
+    const messages = Array.isArray(req.body?.messages)
+      ? req.body.messages
+          .filter((message) => message && (message.role === 'user' || message.role === 'assistant') && sanitizeOptionalString(message.content))
+          .map((message, index) => ({
+            user_id: userId,
+            chat_id: chatId,
+            role: message.role,
+            content: sanitizeOptionalString(message.content),
+            sort_order: index
+          }))
+      : [];
+
+    const { data: chat, error: chatError } = await supabase
+      .from('ask_recap_chats')
+      .update({
+        title,
+        scope,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', chatId)
+      .eq('user_id', userId)
+      .select('id')
+      .single();
+
+    if (chatError || !chat) {
+      return res.status(404).json({ ok: false, error: 'Ask Recap chat not found.' });
+    }
+
+    const { error: deleteError } = await supabase
+      .from('ask_recap_messages')
+      .delete()
+      .eq('chat_id', chatId)
+      .eq('user_id', userId);
+
+    if (deleteError) {
+      throw deleteError;
+    }
+
+    if (messages.length > 0) {
+      const { error: insertError } = await supabase
+        .from('ask_recap_messages')
+        .insert(messages);
+
+      if (insertError) {
+        throw insertError;
+      }
+    }
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('Error saving Ask Recap chat:', error);
+    return res.status(500).json({ ok: false, error: 'Failed to save Ask Recap chat.' });
+  }
+});
+
+app.delete('/api/ask-recap/chats/:id', authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const chatId = req.params.id;
+
+    const { error } = await supabase
+      .from('ask_recap_chats')
+      .delete()
+      .eq('id', chatId)
+      .eq('user_id', userId);
+
+    if (error) {
+      throw error;
+    }
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('Error deleting Ask Recap chat:', error);
+    return res.status(500).json({ ok: false, error: 'Failed to delete Ask Recap chat.' });
   }
 });
 

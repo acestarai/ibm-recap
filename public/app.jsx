@@ -212,7 +212,7 @@ function MainApp() {
     { id: 'upload', label: 'Upload', icon: '📤' },
     { id: 'transcribe', label: 'Transcribe', icon: '📝' },
     { id: 'summarize', label: 'Summarize', icon: '📊' },
-    { id: 'analytics', label: 'Ask Recap', icon: '💬', disabled: true }
+    { id: 'analytics', label: 'Ask Recap', icon: '💬' }
   ];
 
   // Ref for scrolling to home dashboard
@@ -425,7 +425,7 @@ function MainApp() {
           refresh={refresh}
         />}
         
-        {activeTab === 'analytics' && <AnalyticsTab />}
+        {activeTab === 'analytics' && <AnalyticsTab historyEntries={historyEntries} meetingEntries={meetingEntries} />}
       </main>
     </div>
   );
@@ -1716,10 +1716,17 @@ function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcrip
 
           {/* Action Buttons */}
           <div className="transcribe-actions">
-            {files.transcript ? (
+            <button
+              className="btn-primary-large"
+              onClick={executeTranscription}
+              disabled={busy || !files.audio}
+            >
+              {busy ? 'Transcribing...' : (files.transcript ? 'Create new transcript' : 'Start transcription')}
+            </button>
+            {files.transcript && (
               <>
                 <button
-                  className="btn-primary-large"
+                  className="btn-secondary-large"
                   onClick={() => window.open('/api/download/transcript', '_blank')}
                 >
                   Download transcript PDF
@@ -1731,14 +1738,6 @@ function TranscribeTab({ files, busy, transcribeJob, setTranscribeJob, transcrip
                   Continue to summarize
                 </button>
               </>
-            ) : (
-              <button
-                className="btn-primary-large"
-                onClick={executeTranscription}
-                disabled={busy || !files.audio}
-              >
-                {busy ? 'Transcribing...' : 'Start transcription'}
-              </button>
             )}
           </div>
             </>
@@ -2026,29 +2025,28 @@ function SummarizeTab({ files, busy, summarizeJob, setSummarizeJob, summaryType,
 
           {/* Action Buttons */}
           <div className="transcribe-actions">
-            {files.summary ? (
+            <button
+              className="btn-primary-large"
+              onClick={executeSummarization}
+              disabled={busy || !files.transcript}
+            >
+              {busy ? 'Generating summary...' : (files.summary ? 'Create new summary' : 'Start summarization')}
+            </button>
+            {files.summary && (
               <>
                 <button
-                  className="btn-primary-large"
+                  className="btn-secondary-large"
                   onClick={() => window.open('/api/download/summary', '_blank')}
                 >
                   Download summary PDF
                 </button>
                 <button
                   className="btn-secondary-large"
-                  disabled
+                  onClick={() => setActiveTab('analytics')}
                 >
                   Continue to Ask Recap
                 </button>
               </>
-            ) : (
-              <button
-                className="btn-primary-large"
-                onClick={executeSummarization}
-                disabled={busy || !files.transcript}
-              >
-                {busy ? 'Generating summary...' : 'Start summarization'}
-              </button>
             )}
           </div>
             </>
@@ -2821,11 +2819,839 @@ function AccountTab({ accountProfile, storageUsage, accountLoading, onBack, refr
 }
 
 // Ask Recap Tab Component
-function AnalyticsTab() {
+function AnalyticsTab({ historyEntries, meetingEntries }) {
+  const availableSources = (historyEntries || []).filter((entry) => entry.file_type === 'transcript' || entry.file_type === 'summary');
+  const recentSources = availableSources.slice(0, 8);
+  const focusableMeetings = (meetingEntries || []).filter((meeting) => !meeting.archivedAt).slice(0, 8);
+  const fileInputRef = React.useRef(null);
+  const [chatSessions, setChatSessions] = React.useState([]);
+  const [activeChatId, setActiveChatId] = React.useState(null);
+  const [messagesByChat, setMessagesByChat] = React.useState({});
+  const [scopeMode, setScopeMode] = React.useState('all');
+  const [dateRange, setDateRange] = React.useState('all');
+  const [selectedMeetingIds, setSelectedMeetingIds] = React.useState([]);
+  const [draftPrompt, setDraftPrompt] = React.useState('');
+  const [showAttachMenu, setShowAttachMenu] = React.useState(false);
+  const [showRecentFilePicker, setShowRecentFilePicker] = React.useState(false);
+  const [attachedItems, setAttachedItems] = React.useState([]);
+  const [queryBusy, setQueryBusy] = React.useState(false);
+  const [chatLoading, setChatLoading] = React.useState(true);
+  const [backfillBusy, setBackfillBusy] = React.useState(false);
+
+  const activeChat = chatSessions.find((session) => session.id === activeChatId) || chatSessions[0];
+  const chatMessages = messagesByChat[activeChatId] || [];
+
+  const buildDefaultWelcomeMessage = React.useCallback((chatId) => ({
+    id: `welcome-${chatId}`,
+    role: 'assistant',
+    content: 'New chat started. Ask about meetings, summaries, transcripts, action items, blockers, risks, or follow-ups across your recent work.',
+    citations: [],
+    status: 'complete'
+  }), []);
+
+  const persistChat = React.useCallback(async (chatId, nextSessions, nextMessagesByChat) => {
+    const authToken = localStorage.getItem('auth_token');
+    if (!authToken || !chatId) {
+      return;
+    }
+
+    const session = nextSessions.find((item) => item.id === chatId);
+    if (!session) {
+      return;
+    }
+
+    const messages = (nextMessagesByChat[chatId] || [])
+      .filter((message) => message.status !== 'thinking' && message.status !== 'writing')
+      .map((message) => ({
+        role: message.role,
+        content: message.content
+      }));
+
+    await fetch(`/api/ask-recap/chats/${chatId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify({
+        title: session.title,
+        scope: session.scope || 'all',
+        messages
+      })
+    });
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const loadPersistedChats = async () => {
+      const authToken = localStorage.getItem('auth_token');
+      if (!authToken) {
+        const fallbackId = `chat-${Date.now()}`;
+        const fallbackChat = {
+          id: fallbackId,
+          title: 'New Ask Recap chat',
+          scope: 'all',
+          messageCount: 1
+        };
+        if (!cancelled) {
+          setChatSessions([fallbackChat]);
+          setActiveChatId(fallbackId);
+          setMessagesByChat({
+            [fallbackId]: [buildDefaultWelcomeMessage(fallbackId)]
+          });
+          setChatLoading(false);
+        }
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/ask-recap/chats', {
+          headers: {
+            'Authorization': `Bearer ${authToken}`
+          }
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+          throw new Error(result.error || 'Failed to load Ask Recap chats.');
+        }
+
+        if (cancelled) return;
+
+        if ((result.chats || []).length === 0) {
+          const createResponse = await fetch('/api/ask-recap/chats', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${authToken}`
+            },
+            body: JSON.stringify({
+              title: 'New Ask Recap chat',
+              scope: 'all'
+            })
+          });
+          const createResult = await createResponse.json();
+          if (!createResponse.ok || !createResult.ok) {
+            throw new Error(createResult.error || 'Failed to create Ask Recap chat.');
+          }
+
+          const createdChat = createResult.chat;
+          const welcomeMessage = buildDefaultWelcomeMessage(createdChat.id);
+          setChatSessions([{ ...createdChat, messageCount: 1 }]);
+          setActiveChatId(createdChat.id);
+          setMessagesByChat({
+            [createdChat.id]: [welcomeMessage]
+          });
+          setChatLoading(false);
+          await persistChat(createdChat.id, [{ ...createdChat, messageCount: 1 }], {
+            [createdChat.id]: [welcomeMessage]
+          });
+          return;
+        }
+
+        const hydratedMessages = (result.chats || []).reduce((accumulator, chat) => {
+          accumulator[chat.id] = (chat.messages || []).map((message) => ({
+            ...message,
+            citations: [],
+            status: 'complete'
+          }));
+          return accumulator;
+        }, {});
+
+        const hydratedChats = (result.chats || []).map((chat) => ({
+          id: chat.id,
+          title: chat.title,
+          scope: chat.scope || 'all',
+          messageCount: (chat.messages || []).length
+        }));
+
+        setChatSessions(hydratedChats);
+        setActiveChatId(hydratedChats[0]?.id || null);
+        setMessagesByChat(hydratedMessages);
+      } catch (error) {
+        console.error('Failed to hydrate Ask Recap chats:', error);
+      } finally {
+        if (!cancelled) {
+          setChatLoading(false);
+        }
+      }
+    };
+
+    loadPersistedChats();
+    return () => {
+      cancelled = true;
+    };
+  }, [buildDefaultWelcomeMessage, persistChat]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const backfillKnowledge = async () => {
+      const authToken = localStorage.getItem('auth_token');
+      if (!authToken) return;
+
+      try {
+        setBackfillBusy(true);
+        await fetch('/api/ask-recap/backfill', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${authToken}`
+          }
+        });
+      } catch (error) {
+        console.error('Failed to optimize Ask Recap knowledge:', error);
+      } finally {
+        if (!cancelled) {
+          setBackfillBusy(false);
+        }
+      }
+    };
+
+    backfillKnowledge();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const renderAskRecapMessageContent = (content) => {
+    const cleaned = String(content || '')
+      .replace(/^#{1,6}\s*/gm, '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/^[ \t]*[-*][ \t]+/gm, '• ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    if (!cleaned) {
+      return null;
+    }
+
+    const blocks = cleaned.split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean);
+
+    return blocks.map((block, blockIndex) => {
+      const lines = block.split('\n').map((line) => line.trim()).filter(Boolean);
+      const isNumberedList = lines.length > 1 && lines.every((line) => /^\d+\.\s+/.test(line));
+      const isBulletList = lines.length > 1 && lines.every((line) => /^•\s+/.test(line));
+
+      if (isNumberedList) {
+        return (
+          <ol key={`block-${blockIndex}`} className="ask-recap-rendered-list ask-recap-rendered-list-numbered">
+            {lines.map((line, lineIndex) => (
+              <li key={`line-${lineIndex}`}>{line.replace(/^\d+\.\s+/, '')}</li>
+            ))}
+          </ol>
+        );
+      }
+
+      if (isBulletList) {
+        return (
+          <ul key={`block-${blockIndex}`} className="ask-recap-rendered-list ask-recap-rendered-list-bulleted">
+            {lines.map((line, lineIndex) => (
+              <li key={`line-${lineIndex}`}>{line.replace(/^•\s+/, '')}</li>
+            ))}
+          </ul>
+        );
+      }
+
+      return (
+        <p key={`block-${blockIndex}`} className="ask-recap-rendered-paragraph">
+          {lines.join(' ')}
+        </p>
+      );
+    });
+  };
+
+  const starterPrompts = [
+    'What action items have come up most often across my recent meetings?',
+    'What recurring blockers do you see in federal CE meetings this month?',
+    'Which open questions are still unresolved across the last five summaries?',
+    'Summarize the main risks mentioned in the latest client workshop.'
+  ];
+
+  const derivedScope = selectedMeetingIds.length > 0 ? 'meeting' : (dateRange !== 'all' ? dateRange : scopeMode);
+
+  const startNewChat = async () => {
+    const authToken = localStorage.getItem('auth_token');
+    let newChatId = `chat-${Date.now()}`;
+    if (authToken) {
+      try {
+        const response = await fetch('/api/ask-recap/chats', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
+          body: JSON.stringify({
+            title: 'New Ask Recap chat',
+            scope: derivedScope
+          })
+        });
+        const result = await response.json();
+        if (response.ok && result.ok && result.chat?.id) {
+          newChatId = result.chat.id;
+        }
+      } catch (error) {
+        console.error('Failed to create persisted Ask Recap chat:', error);
+      }
+    }
+
+    const newChat = {
+      id: newChatId,
+      title: 'New Ask Recap chat',
+      scope: derivedScope,
+      messageCount: 1
+    };
+    const welcomeMessage = buildDefaultWelcomeMessage(newChatId);
+    setChatSessions((current) => [newChat, ...current]);
+    setActiveChatId(newChatId);
+    setMessagesByChat((current) => ({
+      ...current,
+      [newChatId]: [welcomeMessage]
+    }));
+    setDraftPrompt('');
+    setAttachedItems([]);
+    setShowAttachMenu(false);
+    setShowRecentFilePicker(false);
+    if (authToken) {
+      await persistChat(newChatId, [newChat, ...chatSessions], {
+        ...messagesByChat,
+        [newChatId]: [welcomeMessage]
+      });
+    }
+  };
+
+  const toggleMeetingScope = (meetingId) => {
+    setSelectedMeetingIds((current) => (
+      current.includes(meetingId)
+        ? current.filter((id) => id !== meetingId)
+        : [...current, meetingId]
+    ));
+  };
+
+  const renameActiveChat = async (chatId = activeChatId) => {
+    const targetChat = chatSessions.find((session) => session.id === chatId);
+    if (!chatId || !targetChat) return;
+    const nextTitle = window.prompt('Rename chat', targetChat.title);
+    if (!nextTitle || !nextTitle.trim()) return;
+
+    const trimmedTitle = nextTitle.trim();
+    setChatSessions((current) => current.map((session) => (
+      session.id === chatId ? { ...session, title: trimmedTitle } : session
+    )));
+
+    const authToken = localStorage.getItem('auth_token');
+    if (!authToken) return;
+
+    try {
+      await fetch(`/api/ask-recap/chats/${chatId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ title: trimmedTitle })
+      });
+    } catch (error) {
+      console.error('Failed to rename Ask Recap chat:', error);
+    }
+  };
+
+  const deleteActiveChat = async (chatId = activeChatId) => {
+    const targetChat = chatSessions.find((session) => session.id === chatId);
+    if (!chatId || !targetChat) return;
+    const confirmed = window.confirm(`Delete "${targetChat.title}"?`);
+    if (!confirmed) return;
+
+    const remainingSessions = chatSessions.filter((session) => session.id !== chatId);
+    const remainingMessages = { ...messagesByChat };
+    delete remainingMessages[chatId];
+
+    setChatSessions(remainingSessions);
+    setMessagesByChat(remainingMessages);
+
+    const fallbackSession = remainingSessions[0];
+    if (fallbackSession) {
+      setActiveChatId(fallbackSession.id);
+    } else {
+      setActiveChatId(null);
+      await startNewChat();
+    }
+
+    const authToken = localStorage.getItem('auth_token');
+    if (!authToken) return;
+
+    try {
+      await fetch(`/api/ask-recap/chats/${chatId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${authToken}`
+        }
+      });
+    } catch (error) {
+      console.error('Failed to delete Ask Recap chat:', error);
+    }
+  };
+
+  const addAttachedItem = (item) => {
+    setAttachedItems((current) => {
+      if (current.some((entry) => entry.id === item.id)) return current;
+      return [...current, item];
+    });
+  };
+
+  const removeAttachedItem = (itemId) => {
+    setAttachedItems((current) => current.filter((entry) => entry.id !== itemId));
+  };
+
+  const handleLocalFileSelection = (event) => {
+    const selectedFiles = Array.from(event.target.files || []);
+    selectedFiles.forEach((file) => {
+      addAttachedItem({
+        id: `upload-${file.name}-${file.size}-${file.lastModified}`,
+        label: file.name,
+        meta: `${formatBytes(file.size)} • Local file`,
+        sourceType: 'local'
+      });
+    });
+    event.target.value = '';
+    setShowAttachMenu(false);
+    setShowRecentFilePicker(false);
+  };
+
+  const submitPrompt = async (promptText) => {
+    const trimmedPrompt = promptText.trim();
+    if (!trimmedPrompt) return;
+    const pendingMessageId = `assistant-pending-${Date.now()}`;
+
+    const userMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: trimmedPrompt,
+      citations: []
+    };
+
+    const pendingAssistantMessage = {
+      id: pendingMessageId,
+      role: 'assistant',
+      content: '',
+      citations: [],
+      status: 'thinking'
+    };
+
+    setMessagesByChat((current) => ({
+      ...current,
+      [activeChatId]: [...(current[activeChatId] || []), userMessage, pendingAssistantMessage]
+    }));
+    setChatSessions((current) => current.map((session) => (
+      session.id === activeChatId
+        ? {
+            ...session,
+            title: session.messageCount === 0 ? truncateText(trimmedPrompt, 32) : session.title,
+            scope: derivedScope,
+            messageCount: session.messageCount + 1
+          }
+        : session
+    )));
+    setDraftPrompt('');
+    setQueryBusy(true);
+    const writingTimer = setTimeout(() => {
+      setMessagesByChat((current) => ({
+        ...current,
+        [activeChatId]: (current[activeChatId] || []).map((message) => (
+          message.id === pendingMessageId && message.status === 'thinking'
+            ? { ...message, status: 'writing' }
+            : message
+        ))
+      }));
+    }, 900);
+
+    try {
+      const authToken = localStorage.getItem('auth_token');
+      const recentMessages = (messagesByChat[activeChatId] || [])
+        .filter((message) => message.status !== 'thinking' && message.status !== 'writing')
+        .slice(-6)
+        .map((message) => ({
+          role: message.role,
+          content: message.content
+        }));
+      const response = await fetch('/api/ask-recap/query', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+        },
+        body: JSON.stringify({
+          question: trimmedPrompt,
+          scope: selectedMeetingIds.length > 0 ? 'meeting' : scopeMode,
+          dateRange,
+          selectedMeetingIds,
+          recentMessages,
+          attachedRecentFileIds: attachedItems
+            .filter((item) => item.sourceType === 'recent' && item.fileId)
+            .map((item) => item.fileId)
+        })
+      });
+
+      const result = await response.json();
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error || 'Ask Recap query failed.');
+      }
+
+      const assistantMessage = {
+        id: pendingMessageId,
+        role: 'assistant',
+        content: result.answer,
+        status: 'complete',
+        citations: (result.citations || []).reduce((accumulator, citation) => {
+          const renderedLabel = `${citation.meetingTitle || citation.documentLabel}${citation.pageNumber ? `, p. ${citation.pageNumber}` : ''}, ${citation.lineRef}`;
+          const dedupeKey = [
+            citation.pageNumber || 'na',
+            citation.startLine || 'na',
+            citation.endLine || 'na',
+            String(citation.snippet || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 160)
+          ].join(':');
+          if (accumulator.some((entry) => entry.dedupeKey === dedupeKey || entry.renderedLabel === renderedLabel)) {
+            return accumulator;
+          }
+
+          accumulator.push({
+            id: citation.id,
+            citationNumber: citation.citationNumber,
+            dedupeKey,
+            renderedLabel,
+            label: citation.meetingTitle || citation.documentLabel,
+            lineRef: citation.lineRef,
+            pageNumber: citation.pageNumber || null,
+            startLine: citation.startLine || null,
+            endLine: citation.endLine || null,
+            snippet: citation.snippet || '',
+            entryId: citation.fileId
+          });
+          return accumulator;
+        }, [])
+      };
+      const shouldRetitle = activeChat?.title === 'New Ask Recap chat';
+      const nextTitle = shouldRetitle && result.suggestedTitle
+        ? result.suggestedTitle
+        : (activeChat?.title || 'New Ask Recap chat');
+
+      const nextMessagesByChat = {
+        ...messagesByChat,
+        [activeChatId]: (messagesByChat[activeChatId] || []).map((message) => (
+          message.id === pendingMessageId ? assistantMessage : message
+        ))
+      };
+      const nextSessions = chatSessions.map((session) => (
+        session.id === activeChatId
+          ? {
+              ...session,
+              title: nextTitle,
+              scope: result.appliedScope || derivedScope,
+              messageCount: nextMessagesByChat[activeChatId].filter((message) => message.status !== 'thinking' && message.status !== 'writing').length
+            }
+          : session
+      ));
+      setMessagesByChat((current) => ({
+        ...current,
+        [activeChatId]: (current[activeChatId] || []).map((message) => (
+          message.id === pendingMessageId ? assistantMessage : message
+        ))
+      }));
+      setChatSessions(nextSessions);
+      await persistChat(activeChatId, nextSessions, nextMessagesByChat);
+    } catch (error) {
+      clearTimeout(writingTimer);
+      setMessagesByChat((current) => ({
+        ...current,
+        [activeChatId]: (current[activeChatId] || []).map((message) => (
+          message.id === pendingMessageId
+            ? {
+                id: `assistant-error-${Date.now()}`,
+                role: 'assistant',
+                content: error.message || 'Ask Recap could not answer that question yet.',
+                citations: [],
+                status: 'error'
+              }
+            : message
+        ))
+      }));
+      await persistChat(activeChatId, chatSessions, {
+        ...messagesByChat,
+        [activeChatId]: (messagesByChat[activeChatId] || []).map((message) => (
+          message.id === pendingMessageId
+            ? {
+                id: `assistant-error-${Date.now()}`,
+                role: 'assistant',
+                content: error.message || 'Ask Recap could not answer that question yet.',
+                citations: [],
+                status: 'error'
+              }
+            : message
+        ))
+      });
+    } finally {
+      clearTimeout(writingTimer);
+      setQueryBusy(false);
+    }
+  };
+
   return (
-    <div className="coming-soon-tab">
-      <div className="coming-soon-content">
-        <span className="coming-soon-badge">Coming soon</span>
+    <div className="ask-recap-tab">
+      <div className="ask-recap-shell">
+        <aside className="ask-recap-sidebar">
+          <div className="ask-recap-sidebar-header">
+            <button className="btn-primary-large ask-recap-new-chat" onClick={startNewChat}>
+              + New chat
+            </button>
+            {backfillBusy && (
+              <div className="ask-recap-sidebar-note">Optimizing older summaries and transcripts for Ask Recap…</div>
+            )}
+          </div>
+
+          <div className="ask-recap-sidebar-section">
+            <div className="ask-recap-sidebar-label">Saved chats</div>
+            <div className="ask-recap-chat-list">
+              {chatSessions.map((session) => (
+                <div
+                  key={session.id}
+                  className={`ask-recap-chat-card ${session.id === activeChatId ? 'active' : ''}`}
+                >
+                  <button
+                    className={`ask-recap-chat-item ${session.id === activeChatId ? 'active' : ''}`}
+                    onClick={() => setActiveChatId(session.id)}
+                  >
+                    <div className="ask-recap-chat-title">{session.title}</div>
+                    <div className="ask-recap-chat-meta">{formatScopeLabel(session.scope)} • {session.messageCount} messages</div>
+                  </button>
+                  <div className="ask-recap-chat-inline-actions">
+                    <button
+                      className="ask-recap-chat-inline-action"
+                      aria-label={`Rename ${session.title}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setActiveChatId(session.id);
+                        renameActiveChat(session.id);
+                      }}
+                    >
+                      <span className="ask-recap-chat-inline-icon">✎</span>
+                      <span className="ask-recap-chat-inline-tooltip">Rename</span>
+                    </button>
+                    <button
+                      className="ask-recap-chat-inline-action danger"
+                      aria-label={`Delete ${session.title}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setActiveChatId(session.id);
+                        deleteActiveChat(session.id);
+                      }}
+                    >
+                      <span className="ask-recap-chat-inline-icon">×</span>
+                      <span className="ask-recap-chat-inline-tooltip">Delete</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="ask-recap-sidebar-section">
+            <div className="ask-recap-sidebar-label">Focus</div>
+            <div className="ask-recap-focus-controls">
+              <label className="ask-recap-focus-field">
+                <span>Date range</span>
+                <select
+                  className="ask-recap-focus-select"
+                  value={dateRange}
+                  onChange={(event) => setDateRange(event.target.value)}
+                >
+                  <option value="all">All time</option>
+                  <option value="7d">Last 7 days</option>
+                  <option value="30d">Last 30 days</option>
+                  <option value="90d">Last 90 days</option>
+                </select>
+              </label>
+              {focusableMeetings.length > 0 && (
+                <div className="ask-recap-focus-meetings">
+                  {focusableMeetings.map((meeting) => (
+                    <button
+                      key={meeting.id}
+                      className={`ask-recap-focus-meeting ${selectedMeetingIds.includes(meeting.id) ? 'active' : ''}`}
+                      onClick={() => toggleMeetingScope(meeting.id)}
+                    >
+                      <span className="ask-recap-focus-meeting-title">{meeting.filename}</span>
+                      <span className="ask-recap-focus-meeting-meta">{meeting.displayDate}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {(selectedMeetingIds.length > 0 || dateRange !== 'all') && (
+                <button
+                  className="ask-recap-focus-clear"
+                  onClick={() => {
+                    setSelectedMeetingIds([]);
+                    setDateRange('all');
+                  }}
+                >
+                  Clear focus
+                </button>
+              )}
+            </div>
+          </div>
+        </aside>
+
+        <section className="ask-recap-main">
+          <div className="ask-recap-conversation">
+            {chatLoading ? (
+              <div className="ask-recap-empty-state">
+                <div className="ask-recap-empty-title">Loading Ask Recap</div>
+              </div>
+            ) : chatMessages.length === 0 ? (
+              <div className="ask-recap-empty-state">
+                <div className="ask-recap-empty-title">Ask Recap</div>
+                <div className="ask-recap-empty-prompts">
+                  {starterPrompts.map((prompt) => (
+                    <button
+                      key={prompt}
+                      className="ask-recap-prompt-card"
+                      onClick={() => submitPrompt(prompt)}
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="ask-recap-message-list">
+                {chatMessages.map((message) => (
+                  <div key={message.id} className={`ask-recap-message ${message.role} ${message.status === 'thinking' || message.status === 'writing' ? 'pending' : ''}`}>
+                    <div className="ask-recap-message-body">
+                      {(message.status === 'thinking' || message.status === 'writing') ? (
+                        <div className="ask-recap-status-shell" aria-live="polite">
+                          <div className="ask-recap-status-graphic" aria-hidden="true">
+                            <span />
+                            <span />
+                            <span />
+                          </div>
+                          <div className="ask-recap-status-copy">
+                            Ask Recap is {message.status === 'thinking' ? 'thinking' : 'writing'}…
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="ask-recap-message-copy">
+                          {renderAskRecapMessageContent(message.content)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="ask-recap-composer">
+              {attachedItems.length > 0 && (
+                <div className="ask-recap-attachments">
+                  {attachedItems.map((item) => (
+                    <div key={item.id} className="ask-recap-attachment-chip">
+                      <div className="ask-recap-attachment-copy">
+                        <div className="ask-recap-attachment-label">{item.label}</div>
+                        {item.meta && <div className="ask-recap-attachment-meta">{item.meta}</div>}
+                      </div>
+                      <button className="ask-recap-attachment-remove" onClick={() => removeAttachedItem(item.id)}>
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="ask-recap-composer-bar">
+                <div className="ask-recap-attach-shell">
+                  <button
+                    className="ask-recap-attach-button"
+                    onClick={() => {
+                      setShowAttachMenu((current) => !current);
+                      setShowRecentFilePicker(false);
+                    }}
+                    aria-label="Add files"
+                  >
+                    +
+                  </button>
+                  {showAttachMenu && (
+                    <div className="ask-recap-attach-menu">
+                      <button
+                        className="ask-recap-attach-menu-item"
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        <span className="ask-recap-attach-menu-icon">📎</span>
+                        <span>Add photos & files</span>
+                      </button>
+                      <button
+                        className="ask-recap-attach-menu-item"
+                        onClick={() => setShowRecentFilePicker((current) => !current)}
+                      >
+                        <span className="ask-recap-attach-menu-icon">🗂️</span>
+                        <span>Recent files</span>
+                        <span className="ask-recap-attach-menu-arrow">›</span>
+                      </button>
+
+                      {showRecentFilePicker && (
+                        <div className="ask-recap-recent-files">
+                          {recentSources.length === 0 ? (
+                            <div className="ask-recap-recent-files-empty">No recent transcript or summary files yet.</div>
+                          ) : recentSources.slice(0, 6).map((entry) => (
+                            <button
+                              key={entry.id}
+                              className="ask-recap-recent-file"
+                              onClick={() => {
+                                addAttachedItem({
+                                  id: `recent-${entry.id}`,
+                                  fileId: entry.id,
+                                  label: entry.displayFilename,
+                                  meta: `${entry.fileTypeLabel} • ${entry.displayDate}`,
+                                  sourceType: 'recent'
+                                });
+                                setShowAttachMenu(false);
+                                setShowRecentFilePicker(false);
+                              }}
+                            >
+                              <span className="ask-recap-recent-file-title">{entry.displayFilename}</span>
+                              <span className="ask-recap-recent-file-meta">{entry.fileTypeLabel} • {entry.displayDate}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <textarea
+                  className="ask-recap-composer-input"
+                  placeholder="Ask anything"
+                  value={draftPrompt}
+                  onChange={(event) => setDraftPrompt(event.target.value)}
+                  rows="1"
+                />
+
+                <button
+                  className="ask-recap-send-button"
+                  onClick={() => submitPrompt(draftPrompt)}
+                  disabled={!draftPrompt.trim() || queryBusy}
+                  aria-label="Send to Ask Recap"
+                >
+                  {queryBusy ? '…' : '↑'}
+                </button>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                style={{ display: 'none' }}
+                onChange={handleLocalFileSelection}
+              />
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );
@@ -2868,7 +3694,7 @@ function matchesDateFilter(isoString, filter) {
   return true;
 }
 
-async function openHistoryEntryInNewWindow(entry, unavailableMessage) {
+async function openHistoryEntryInNewWindow(entry, unavailableMessage, options = {}) {
   const previewWindow = window.open('', '_blank');
   if (!previewWindow) {
     throw new Error('Your browser blocked the new window. Please allow pop-ups for IBM Recap.');
@@ -2879,7 +3705,8 @@ async function openHistoryEntryInNewWindow(entry, unavailableMessage) {
   try {
     const pdfBlob = await fetchHistoryPdfBlob(entry.id);
     const pdfObjectUrl = URL.createObjectURL(pdfBlob);
-    previewWindow.location.href = pdfObjectUrl;
+    const pageFragment = options.pageNumber ? `#page=${options.pageNumber}` : '';
+    previewWindow.location.href = `${pdfObjectUrl}${pageFragment}`;
   } catch (error) {
     previewWindow.close();
     throw new Error(error.message || unavailableMessage);
@@ -3125,6 +3952,15 @@ function doesMeetingMatchStatusFilter(meeting, filter) {
 function truncateText(value, maxLength = 160) {
   if (!value || value.length <= maxLength) return value;
   return `${value.slice(0, maxLength).trimEnd()}...`;
+}
+
+function formatScopeLabel(scope) {
+  if (scope === 'meeting') return 'Selected meetings';
+  if (scope === 'document') return 'Selected documents';
+  if (scope === '7d') return 'Last 7 days';
+  if (scope === '30d') return 'Last 30 days';
+  if (scope === '90d') return 'Last 90 days';
+  return 'All meeting history';
 }
 
 function deriveMeetingIcon(meeting) {
